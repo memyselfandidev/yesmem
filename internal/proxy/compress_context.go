@@ -46,7 +46,7 @@ func CompressContext(messages []any, keepRecent int, threadID string, estimateTo
 	// Calculate protected tail: messages within keepRecent window stay untouched
 	protectedTail := totalMsgs - keepRecent
 	if protectedTail < 1 {
-		protectedTail = 1 // always skip system message at index 0
+		protectedTail = 1 // always skip messages[0] (the original first user turn; Anthropic API has system separately)
 	}
 
 	for i := 1; i < protectedTail; i++ {

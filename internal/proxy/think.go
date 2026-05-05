@@ -53,7 +53,7 @@ func (s *Server) buildThinkReminder(threadID string, sessionID string, nonClaude
 	}
 	reminder += "Do not repeat memory lookups for the same question unless a new concrete hypothesis appears.\n"
 	reminder += "For direct status, timing, or \"what just happened\" questions, prefer visible timestamps and current state before memory lookup.\n"
-	reminder += "If relevant prior context is already present in the conversation, use it instead of starting a new memory lookup.\n"
+	reminder += "Conversation context supplements but does not replace memory — search when acting on assumptions about external behavior (settings, APIs, config, conventions). Skip lookups only for pure status questions about the current conversation.\n"
 	reminder += hints.NextTimestampHint()
 
 	if count%10 == 0 {

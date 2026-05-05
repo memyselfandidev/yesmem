@@ -469,6 +469,90 @@ func TestSaveCountNoPreviousGotcha(t *testing.T) {
 	}
 }
 
+func TestFilterAlreadyBriefedGotchas_KeepsNew(t *testing.T) {
+	sessionStart := time.Now().Add(-1 * time.Hour)
+	gotcha := matchedGotcha{
+		learning: models.Learning{
+			Content:   "new gotcha",
+			CreatedAt: time.Now(),
+			FailCount: 0,
+		},
+		score: 3,
+	}
+	filtered := filterAlreadyBriefedGotchas([]matchedGotcha{gotcha}, sessionStart, "")
+	if len(filtered) != 1 {
+		t.Fatalf("should keep new gotcha (created after session start), got %d", len(filtered))
+	}
+}
+
+func TestFilterAlreadyBriefedGotchas_KeepsFailCount(t *testing.T) {
+	sessionStart := time.Now().Add(-1 * time.Hour)
+	gotcha := matchedGotcha{
+		learning: models.Learning{
+			Content:   "old failure-based gotcha",
+			CreatedAt: time.Now().Add(-2 * time.Hour),
+			FailCount: 3,
+		},
+		score: 4,
+	}
+	filtered := filterAlreadyBriefedGotchas([]matchedGotcha{gotcha}, sessionStart, "")
+	if len(filtered) != 1 {
+		t.Fatalf("should keep gotcha with FailCount>0 even if old, got %d", len(filtered))
+	}
+}
+
+func TestFilterAlreadyBriefedGotchas_KeepsFileSpecific(t *testing.T) {
+	sessionStart := time.Now().Add(-1 * time.Hour)
+	gotcha := matchedGotcha{
+		learning: models.Learning{
+			Content:   "old info gotcha about a file",
+			CreatedAt: time.Now().Add(-2 * time.Hour),
+			FailCount: 0,
+			Entities:  []string{"src/main.go", "handler"},
+		},
+		score: 3,
+	}
+	// File entity matches the input path
+	filtered := filterAlreadyBriefedGotchas([]matchedGotcha{gotcha}, sessionStart, "/home/user/project/src/main.go")
+	if len(filtered) != 1 {
+		t.Fatalf("should keep file-specific gotcha even if old+info, got %d", len(filtered))
+	}
+	// Unrelated input → should be skipped
+	filtered = filterAlreadyBriefedGotchas([]matchedGotcha{gotcha}, sessionStart, "ls -la")
+	if len(filtered) != 0 {
+		t.Fatalf("should skip file-specific gotcha when input doesn't match, got %d", len(filtered))
+	}
+}
+
+func TestFilterAlreadyBriefedGotchas_SkipsOldInfoGotcha(t *testing.T) {
+	sessionStart := time.Now().Add(-1 * time.Hour)
+	gotcha := matchedGotcha{
+		learning: models.Learning{
+			Content:   "old info gotcha already in briefing",
+			CreatedAt: time.Now().Add(-2 * time.Hour),
+			FailCount: 0,
+		},
+		score: 3,
+	}
+	filtered := filterAlreadyBriefedGotchas([]matchedGotcha{gotcha}, sessionStart, "")
+	if len(filtered) != 0 {
+		t.Fatalf("should skip old info gotcha (already in briefing), got %d", len(filtered))
+	}
+}
+
+func TestFilterAlreadyBriefedGotchas_Mixed(t *testing.T) {
+	sessionStart := time.Now().Add(-1 * time.Hour)
+	gotchas := []matchedGotcha{
+		{learning: models.Learning{Content: "old info", CreatedAt: time.Now().Add(-2 * time.Hour), FailCount: 0}, score: 3},
+		{learning: models.Learning{Content: "new info", CreatedAt: time.Now(), FailCount: 0}, score: 3},
+		{learning: models.Learning{Content: "old failure", CreatedAt: time.Now().Add(-2 * time.Hour), FailCount: 2}, score: 4},
+	}
+	filtered := filterAlreadyBriefedGotchas(gotchas, sessionStart, "")
+	if len(filtered) != 2 {
+		t.Fatalf("should keep new info + old failure, got %d", len(filtered))
+	}
+}
+
 func TestSaveCountMultipleIDs(t *testing.T) {
 	store := newTestStore(t)
 	id1 := insertTestLearning(store, "gotcha one about cp", "gotcha")

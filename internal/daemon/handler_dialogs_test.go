@@ -818,3 +818,30 @@ func TestNotifySession_SharedWindow(t *testing.T) {
 		t.Error("expected false for shared window")
 	}
 }
+
+func TestHandleWhoami_IncludesModelFromProxyState(t *testing.T) {
+	h, s := mustHandler(t)
+	if err := s.SetProxyState("session_model:sid-w-model", "claude-opus-4-7"); err != nil {
+		t.Fatal(err)
+	}
+	resp := h.Handle(Request{Method: "whoami", Params: map[string]any{"session_id": "sid-w-model"}})
+	if resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	m := resultMap(t, resp)
+	if m["model"] != "claude-opus-4-7" {
+		t.Errorf("model=%v, want claude-opus-4-7", m["model"])
+	}
+}
+
+func TestHandleWhoami_OmitsModelWhenProxyStateMissing(t *testing.T) {
+	h, _ := mustHandler(t)
+	resp := h.Handle(Request{Method: "whoami", Params: map[string]any{"session_id": "no-model-sess"}})
+	if resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	m := resultMap(t, resp)
+	if v, ok := m["model"]; ok && v != "" {
+		t.Errorf("model should be empty/missing when proxy_state absent, got %v", v)
+	}
+}

@@ -32,3 +32,4 @@ Get oriented at session start or when switching context.
 - `project_summary` gives chronological session overview
 - `get_coverage` shows which files were edited across sessions
 - `set_persona` for manual trait overrides (highest priority)
+- Code exploration: try `search_code`/`search_code_index` before raw grep. On 0 hits for a symbol that should exist, cross-check with `get_file_symbols(file)` — a hit there means the graph is stale, not the code absent.

@@ -290,7 +290,7 @@ func TestGenerateRecovery_ReturnsBlock(t *testing.T) {
 	store := setupStore(t)
 	// Seed a session with messages for recovery
 	store.UpsertSession(&models.Session{
-		ID: "recover-me", Project: "/var/www/ccm19", ProjectShort: "ccm19",
+		ID: "recover-me", Project: "/var/www/myproject", ProjectShort: "myproject",
 		FirstMessage: "Fix the login bug", MessageCount: 3,
 	})
 	store.InsertMessages([]models.Message{
@@ -326,7 +326,7 @@ func TestGenerateRecovery_EmptyWithoutConfig(t *testing.T) {
 func TestGenerate_DoesNotContainRecovery(t *testing.T) {
 	store := setupStore(t)
 	store.UpsertSession(&models.Session{
-		ID: "recover-me", Project: "/var/www/ccm19", ProjectShort: "ccm19",
+		ID: "recover-me", Project: "/var/www/myproject", ProjectShort: "myproject",
 		FirstMessage: "Fix the login bug", MessageCount: 3,
 	})
 	store.InsertMessages([]models.Message{
@@ -336,7 +336,7 @@ func TestGenerate_DoesNotContainRecovery(t *testing.T) {
 	gen := New(store, 3)
 	gen.SetRecovery("recover-me", "clear")
 
-	text := gen.Generate("/var/www/ccm19")
+	text := gen.Generate("/var/www/myproject")
 	if strings.Contains(text, "vor Clear") {
 		t.Error("Generate() should NOT contain recovery block — it must be injected post-refine")
 	}

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+var ErrNotFound = errors.New("not found")
+
 // Store wraps an SQLite database connection.
 type Store struct {
 	db        *sql.DB
@@ -20,6 +23,8 @@ type Store struct {
 
 	messagesDB     *sql.DB
 	messagesReadDB *sql.DB
+	capStoreDB     *sql.DB
+	readOnlyDB     *sql.DB
 
 	ftsLastSyncID atomic.Int64 // tracks highest learning ID synced to FTS5
 }
@@ -32,7 +37,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 
-	s := &Store{db: db, runtimeDB: db, readDB: db, messagesDB: db, messagesReadDB: db}
+	s := &Store{db: db, runtimeDB: db, readDB: db, messagesDB: db, messagesReadDB: db, readOnlyDB: db}
 
 	if path != ":memory:" {
 		runtimePath := filepath.Join(filepath.Dir(path), "runtime.db")
@@ -86,6 +91,13 @@ func Open(path string) (*Store, error) {
 		// Prevent reads from blocking on writes during heavy indexing
 		messagesReadDB.Exec("PRAGMA read_uncommitted=true")
 		s.messagesReadDB = messagesReadDB
+
+		readOnlyDB, err := openSQLiteReadOnly(path)
+		if err != nil {
+			s.Close()
+			return nil, fmt.Errorf("open read-only db: %w", err)
+		}
+		s.readOnlyDB = readOnlyDB
 	}
 
 	if err := s.migrateProxyStateToRuntime(); err != nil {
@@ -98,6 +110,10 @@ func Open(path string) (*Store, error) {
 
 // Close closes the database connection.
 func (s *Store) Close() error {
+	s.CloseCapsDB()
+	if s.readOnlyDB != nil && s.readOnlyDB != s.db && s.readOnlyDB != s.readDB {
+		s.readOnlyDB.Close()
+	}
 	if s.messagesReadDB != nil && s.messagesReadDB != s.db && s.messagesReadDB != s.messagesDB {
 		s.messagesReadDB.Close()
 	}
@@ -182,11 +198,46 @@ func openSQLite(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("set synchronous: %w", err)
 	}
+	// Cap WAL physical size: after each checkpoint SQLite truncates the WAL
+	// file down to this limit. Without it the WAL is recycled in place and
+	// stays at its peak size, slowing every external sqlite3-reader by ~8s
+	// per open once it reaches hundreds of MB.
+	if _, err := db.Exec("PRAGMA journal_size_limit=10485760"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set journal_size_limit: %w", err)
+	}
 
 	return db, nil
 }
 
-// StartFTSSync runs a background goroutine that periodically syncs new learnings
+// openSQLiteReadOnly opens a read-only connection to the same database file
+// used by openSQLite. The connection enforces read-only at the driver level via
+// the SQLite URI mode=ro flag and PRAGMA query_only=1 as defense in depth.
+// Callers should use this for query-only access paths that accept untrusted
+// SQL (e.g. the db_query CLI/RPC) so the validator is not the only safeguard.
+func openSQLiteReadOnly(path string) (*sql.DB, error) {
+	uri := "file:" + path + "?mode=ro&immutable=0"
+	db, err := sql.Open("sqlite", uri)
+	if err != nil {
+		return nil, fmt.Errorf("open ro db: %w", err)
+	}
+
+	// MaxOpenConns=1 keeps the per-connection query_only PRAGMA reliable.
+	// Read-only callers are not on a hot path; the wiki_export use case is
+	// a handful of bulk queries, not concurrent serving.
+	db.SetMaxOpenConns(1)
+
+	if _, err := db.Exec("PRAGMA query_only=1"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set query_only: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set busy_timeout: %w", err)
+	}
+
+	return db, nil
+}
 // into the FTS5 index. Replaces the old trigger-based approach which caused
 // write contention blocking BM25 reads for 5-60s during extraction/evolution.
 func (s *Store) StartFTSSync(ctx context.Context, interval time.Duration) {

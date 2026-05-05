@@ -39,7 +39,7 @@ func (s *Server) handleOpenAICompletions(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "translate request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	ctx := s.prepareOpenAIRequestContext(anthReq, reqIdx, r.Header.Get("X-Claude-Code-Session-Id"))
+	ctx := s.prepareOpenAIRequestContext(anthReq, reqIdx, r.Header.Get("X-Claude-Code-Session-Id"), r.Header.Get("User-Agent"))
 	s.runOpenAIParityPipeline(anthReq, &ctx)
 
 	outReq, err := translateAnthropicToOpenAI(anthReq)

@@ -453,14 +453,18 @@ func StripOldNarratives(messages []any) []any {
 	return result
 }
 
-// isNarrativeMessage checks if a message contains "Session-Kontext (auto-generiert".
+// isNarrativeMessage checks whether a user-role message is a standalone narrative
+// block (the legacy pattern where narrative was injected as its own user message).
+// Uses HasPrefix on trimmed text so a user message that merely CONTAINS the
+// narrative marker somewhere inside the user's own input is NOT classified as
+// narrative-only, preventing StripOldNarratives from deleting the user's content.
 func isNarrativeMessage(m map[string]any) bool {
 	role, _ := m["role"].(string)
 	if role != "user" {
 		return false
 	}
-	text := extractMessageText(m)
-	return strings.Contains(text, "Session-Kontext (auto-generiert")
+	text := strings.TrimSpace(extractMessageText(m))
+	return strings.HasPrefix(text, "Session-Kontext (auto-generiert")
 }
 
 // extractMessageText gets text from a message with string or array content.

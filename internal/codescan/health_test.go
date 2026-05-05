@@ -83,6 +83,27 @@ func TestRenderHealth_Integration(t *testing.T) {
 	if md == "" {
 		t.Error("should render non-empty health section")
 	}
+	// Should NOT emit own header — caller (render.go / knowledge_index.go) provides it
+	// to avoid duplicate "### Code Health" in codemap output.
+	if findSubstrHealth(md, "### Code Health") {
+		t.Error("RenderCodeHealth should NOT emit '### Code Health' header — caller provides it to avoid duplication")
+	}
+	// Should still contain the actual signal data
+	if !findSubstrHealth(md, "TODO/FIXME/HACK") {
+		t.Error("should contain TODO count")
+	}
+	if !findSubstrHealth(md, "without test coverage") {
+		t.Error("should contain test coverage count")
+	}
+}
+
+func findSubstrHealth(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRenderHealth_Clean(t *testing.T) {

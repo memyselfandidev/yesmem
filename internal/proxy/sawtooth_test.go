@@ -471,3 +471,46 @@ func TestSawtoothTrigger_SetTokenThreshold_Emergency(t *testing.T) {
 		t.Fatalf("expected TriggerEmergency, got %s", reason)
 	}
 }
+
+func TestShouldInvalidateFrozen(t *testing.T) {
+	tests := []struct {
+		name           string
+		combinedTokens int
+		threshold      int
+		want           bool
+	}{
+		{
+			name:           "combined below threshold — must NOT invalidate",
+			combinedTokens: 72000,
+			threshold:      190000,
+			want:           false,
+		},
+		{
+			name:           "combined above threshold — must invalidate",
+			combinedTokens: 200000,
+			threshold:      190000,
+			want:           true,
+		},
+		{
+			name:           "combined well below — must NOT invalidate",
+			combinedTokens: 72000,
+			threshold:      190000,
+			want:           false,
+		},
+		{
+			name:           "combined at threshold — must NOT invalidate",
+			combinedTokens: 190000,
+			threshold:      190000,
+			want:           false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldInvalidateFrozen(tt.combinedTokens, tt.threshold)
+			if got != tt.want {
+				t.Errorf("shouldInvalidateFrozen(combined=%d, threshold=%d) = %v, want %v",
+					tt.combinedTokens, tt.threshold, got, tt.want)
+			}
+		})
+	}
+}

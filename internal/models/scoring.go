@@ -264,3 +264,27 @@ func ContextualScoreAndSort(learnings []Learning, ctx QueryContext) {
 		return learnings[i].Score > learnings[j].Score
 	})
 }
+
+// OriginMultiplier returns a trust-weight per provenance label.
+// Untrusted origins like web_external score below half; user-stated saves
+// remain at full weight. Unknown origins fall back to a conservative 0.8.
+// Cap-internal saves use the cap_-prefix and score 0.5.
+func OriginMultiplier(origin string) float64 {
+	switch origin {
+	case "user":
+		return 1.0
+	case "file_read":
+		return 0.9
+	case "bash_command_input":
+		return 0.7
+	case "llm_extracted_session":
+		return 0.6
+	case "web_external":
+		return 0.4
+	default:
+		if strings.HasPrefix(origin, "cap_") {
+			return 0.5
+		}
+		return 0.8
+	}
+}

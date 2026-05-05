@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carsteneu/yesmem/caps"
 	"github.com/carsteneu/yesmem/skills"
 	"gopkg.in/yaml.v3"
 
@@ -303,12 +304,24 @@ func executeSetup(home, dataDir, binaryPath, model, apiKey, provider, terminal s
 
 	// 7b. Install bundled skills
 	withSpinner("Installing skills", func() (string, error) {
-		installed, err := installBundledSkills(home)
+		installed, err := InstallBundledSkills(home)
 		if err != nil {
 			return "", err
 		}
 		if installed > 0 {
 			return fmt.Sprintf("%d skills", installed), nil
+		}
+		return "up to date", nil
+	})
+
+	// 7c. Install bundled capabilities
+	withSpinner("Installing capabilities", func() (string, error) {
+		installed, err := InstallBundledCaps(home)
+		if err != nil {
+			return "", err
+		}
+		if installed > 0 {
+			return fmt.Sprintf("%d caps", installed), nil
 		}
 		return "up to date", nil
 	})
@@ -1193,9 +1206,9 @@ func installBundledCommands(home, lang, apiKey, model, provider string) (int, er
 	return installed, nil
 }
 
-// installBundledSkills copies embedded skill directories to ~/.claude/skills/.
+// InstallBundledSkills copies embedded skill directories to ~/.claude/skills/.
 // Uses SHA-256 hash to skip unchanged files. Returns number of installed/updated files.
-func installBundledSkills(home string) (int, error) {
+func InstallBundledSkills(home string) (int, error) {
 	skillsDir := filepath.Join(home, ".claude", "skills")
 	installed := 0
 
@@ -1236,6 +1249,38 @@ func installBundledSkills(home string) (int, error) {
 			}
 			installed++
 		}
+	}
+	return installed, nil
+}
+
+func InstallBundledCaps(home string) (int, error) {
+	capsDir := filepath.Join(home, ".claude", "caps")
+	entries, err := caps.BundledCaps.ReadDir("bundled-caps")
+	if err != nil {
+		return 0, fmt.Errorf("read bundled caps: %w", err)
+	}
+	installed := 0
+	for _, capDir := range entries {
+		if !capDir.IsDir() {
+			continue
+		}
+		name := capDir.Name()
+		data, err := caps.BundledCaps.ReadFile(filepath.Join("bundled-caps", name, "CAP.md"))
+		if err != nil {
+			continue
+		}
+		targetDir := filepath.Join(capsDir, name)
+		targetPath := filepath.Join(targetDir, "CAP.md")
+		if existing, err := os.ReadFile(targetPath); err == nil {
+			if fmt.Sprintf("%x", sha256.Sum256(existing)) == fmt.Sprintf("%x", sha256.Sum256(data)) {
+				continue
+			}
+		}
+		os.MkdirAll(targetDir, 0755)
+		if err := os.WriteFile(targetPath, data, 0644); err != nil {
+			continue
+		}
+		installed++
 	}
 	return installed, nil
 }

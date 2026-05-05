@@ -24,10 +24,15 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 		category = "explicit_teaching"
 	}
 
+	origin, _ := params["origin"].(string)
+	if origin == "" {
+		origin = "user"
+	}
+
 	l := &models.Learning{
 		Category: category, Content: text, Project: project,
 		Confidence: 1.0, CreatedAt: timeNow(), ModelUsed: rememberModel(params),
-		Source: source,
+		Source: source, OriginTool: origin,
 	}
 
 	// Session ID: try explicit param, then active session from idle_tick, then latest from DB

@@ -248,6 +248,96 @@ func TestEagerStub_PreservesLength(t *testing.T) {
 	}
 }
 
+func TestEagerStubMemory_PersistRoundtrip(t *testing.T) {
+	store := map[string]string{}
+	persist := func(key, value string) { store[key] = value }
+	load := func(key string) (string, bool) {
+		v, ok := store[key]
+		return v, ok
+	}
+
+	m1 := NewEagerStubMemory()
+	m1.SetPersistFunc(persist)
+	m1.RecordStubbed("threadX", "tool-uuid-1")
+	m1.RecordStubbed("threadX", "tool-uuid-2")
+	m1.RecordStubbed("threadY", "tool-uuid-3")
+
+	if _, ok := store["eagerstub:threadX"]; !ok {
+		t.Fatalf("threadX not persisted; keys=%v", keysOf(store))
+	}
+	if _, ok := store["eagerstub:threadY"]; !ok {
+		t.Fatalf("threadY not persisted; keys=%v", keysOf(store))
+	}
+
+	m2 := NewEagerStubMemory()
+	m2.SetLoadFunc(load)
+	if !m2.WasStubbed("threadX", "tool-uuid-1") {
+		t.Errorf("expected loaded WasStubbed(threadX, tool-uuid-1) = true")
+	}
+	if !m2.WasStubbed("threadX", "tool-uuid-2") {
+		t.Errorf("expected loaded WasStubbed(threadX, tool-uuid-2) = true")
+	}
+	if !m2.WasStubbed("threadY", "tool-uuid-3") {
+		t.Errorf("expected loaded WasStubbed(threadY, tool-uuid-3) = true")
+	}
+	if m2.WasStubbed("threadX", "tool-uuid-3") {
+		t.Errorf("threads must be isolated: tool-uuid-3 belongs to threadY only")
+	}
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+func TestEagerStub_StubDecisionPersistsAcrossCalls(t *testing.T) {
+	big := strings.Repeat("payload\n", 500)
+	threadID := "thread-X"
+	toolUseID := "t1"
+
+	memory := NewEagerStubMemory()
+
+	msgs1 := []any{
+		map[string]any{"role": "assistant", "content": []any{
+			map[string]any{"type": "tool_use", "id": toolUseID, "name": "Read",
+				"input": map[string]any{"file_path": "x.go"}},
+		}},
+		map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "tool_result", "tool_use_id": toolUseID, "content": big},
+		}},
+		map[string]any{"role": "assistant", "content": "Analyzed."},
+	}
+
+	r1 := EagerStubToolResults(msgs1, 0, simpleEstimate, WithStubMemory(memory, threadID))
+	c1 := r1[1].(map[string]any)["content"].([]any)[0].(map[string]any)["content"].(string)
+	if c1 == big {
+		t.Fatalf("Turn 1: expected stubbed, got full text")
+	}
+
+	msgs2 := []any{
+		map[string]any{"role": "assistant", "content": []any{
+			map[string]any{"type": "tool_use", "id": toolUseID, "name": "Read",
+				"input": map[string]any{"file_path": "x.go"}},
+		}},
+		map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "tool_result", "tool_use_id": toolUseID, "content": big},
+		}},
+	}
+
+	r2 := EagerStubToolResults(msgs2, 0, simpleEstimate, WithStubMemory(memory, threadID))
+	c2 := r2[1].(map[string]any)["content"].([]any)[0].(map[string]any)["content"].(string)
+
+	if c2 == big {
+		t.Errorf("Turn 2: tool_use_id=%s was stubbed in Turn 1 — must stay stubbed even without following assistant", toolUseID)
+	}
+	if c1 != c2 {
+		t.Errorf("stub bytes must be deterministic across calls: Turn 1=%q, Turn 2=%q", c1, c2)
+	}
+}
+
 func TestEagerStub_UnknownTool(t *testing.T) {
 	big := strings.Repeat("data\n", 500)
 	messages := []any{
@@ -269,5 +359,45 @@ func TestEagerStub_UnknownTool(t *testing.T) {
 	}
 	if !strings.Contains(stub, "archived") {
 		t.Errorf("unknown tool stub must say archived, got: %s", stub)
+	}
+}
+
+func TestEagerStub_CountersDistinguishMemoryFromFresh(t *testing.T) {
+	mem := NewEagerStubMemory()
+	tid := "tid-counter"
+
+	makeMessages := func(includeAssistantTrailer bool) []any {
+		big := strings.Repeat("data\n", 500)
+		msgs := []any{
+			map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "tool_use", "id": "t1", "name": "Bash",
+					"input": map[string]any{"command": "ls"}},
+			}},
+			map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": big},
+			}},
+		}
+		if includeAssistantTrailer {
+			msgs = append(msgs, map[string]any{"role": "assistant", "content": "Done."})
+		}
+		return msgs
+	}
+
+	var sticky1, fresh1 int
+	_ = EagerStubToolResults(makeMessages(true), 0, simpleEstimate,
+		WithStubMemory(mem, tid),
+		WithStubCounters(&sticky1, &fresh1))
+
+	if fresh1 != 1 || sticky1 != 0 {
+		t.Fatalf("turn 1 expected fresh=1 sticky=0, got fresh=%d sticky=%d", fresh1, sticky1)
+	}
+
+	var sticky2, fresh2 int
+	_ = EagerStubToolResults(makeMessages(false), 0, simpleEstimate,
+		WithStubMemory(mem, tid),
+		WithStubCounters(&sticky2, &fresh2))
+
+	if sticky2 != 1 || fresh2 != 0 {
+		t.Fatalf("turn 2 expected sticky=1 fresh=0, got sticky=%d fresh=%d", sticky2, fresh2)
 	}
 }

@@ -20,7 +20,7 @@ import (
 // Also enforces agent limits via freeze (not kill). This enables autonomous
 // multi-level agent communication without manual intervention.
 func (h *Handler) startAgentHeartbeat(ctx context.Context) {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	var tick int
 	for {
@@ -33,6 +33,7 @@ func (h *Handler) startAgentHeartbeat(ctx context.Context) {
 			if tick%5 == 0 {
 				h.crashRecovery()
 				h.detectHungAgents()
+				h.processBashJobErrors()
 			}
 			h.enforceAgentLimits()
 			h.detectOrphanedAgents()

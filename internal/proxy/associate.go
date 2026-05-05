@@ -86,6 +86,7 @@ func (s *Server) findAssociativeContextFor(userQuery, currentProject, threadID s
 		Score          float64 `json:"score"`
 		Source         string  `json:"source"`
 		LearningSource string  `json:"learning_source"`
+		OriginTool     string  `json:"origin_tool"`
 		Project        string  `json:"project"`
 		AgentRole      string  `json:"agent_role"`
 	}
@@ -124,6 +125,9 @@ func (s *Server) findAssociativeContextFor(userQuery, currentProject, threadID s
 		case "hook_auto_learned":
 			score *= 1.10
 		}
+
+		// Origin granularity: supplements source-class with provenance-level trust weight
+		score *= models.OriginMultiplier(r.OriginTool)
 
 		// Hard project filter: skip learnings from other projects entirely.
 		// Cross-project learnings rarely help and mostly cause noise.

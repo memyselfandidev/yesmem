@@ -54,6 +54,10 @@ func (s *Store) createSchema() error {
 		tableTokenUsage,
 		tableCodeDescriptions,
 		tableProjectScan,
+		tableSessionActiveCaps,
+		tableReplPatternObservations,
+		tableScheduledJobs,
+		tableBashJobRuns,
 	}
 	for _, ddl := range tables {
 		if _, err := s.db.Exec(ddl); err != nil {
@@ -118,6 +122,7 @@ func (s *Store) createMessagesSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_file ON messages(file_path) WHERE file_path IS NOT NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_session_type ON messages(session_id, message_type, sequence)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)`,
 	} {
 		if _, err := db.Exec(idx); err != nil {
 			return fmt.Errorf("create messages index: %w", err)
@@ -408,12 +413,47 @@ var migrations = []string{
 	`ALTER TABLE learnings ADD COLUMN source_msg_to INTEGER DEFAULT -1`,
 	// v0.54: CBM index mtime for scan cache invalidation
 	`ALTER TABLE project_scan ADD COLUMN cbm_mtime INTEGER NOT NULL DEFAULT 0`,
+	// v0.55: Rename capability → caps
+	`ALTER TABLE session_active_capabilities RENAME TO session_active_caps`,
+	`ALTER TABLE session_active_caps RENAME COLUMN capability_name TO cap_name`,
+	`UPDATE learnings SET category = 'cap' WHERE category = 'capability'`,
+	`ALTER TABLE scheduled_jobs ADD COLUMN mode TEXT NOT NULL DEFAULT 'agent'`,
+	// v0.56: Bash-mode scheduler
+	`ALTER TABLE scheduled_jobs ADD COLUMN cap_name TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE scheduled_jobs ADD COLUMN auto_correct INTEGER NOT NULL DEFAULT 1`,
+	`ALTER TABLE scheduled_jobs ADD COLUMN allowed_ports TEXT NOT NULL DEFAULT '80,443'`,
+	`ALTER TABLE scheduled_jobs ADD COLUMN sandbox TEXT NOT NULL DEFAULT 'standard'`,
+	`ALTER TABLE scheduled_jobs ADD COLUMN interval_seconds INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE scheduled_jobs ADD COLUMN model TEXT NOT NULL DEFAULT ''`,
+	// v0.57: bundle caps — disambiguate which Scripts[] entry a job uses
+	`ALTER TABLE scheduled_jobs ADD COLUMN script_name TEXT NOT NULL DEFAULT ''`,
+	`CREATE TABLE IF NOT EXISTS bash_job_runs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		job_id TEXT NOT NULL,
+		job_name TEXT NOT NULL,
+		cap_name TEXT NOT NULL DEFAULT '',
+		command TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'ok',
+		exit_code INTEGER NOT NULL DEFAULT 0,
+		output TEXT NOT NULL DEFAULT '',
+		error_msg TEXT NOT NULL DEFAULT '',
+		processed INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_bash_job_runs_job ON bash_job_runs(job_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_bash_job_runs_unprocessed ON bash_job_runs(status, processed) WHERE status = 'error' AND processed = 0`,
+	`ALTER TABLE bash_job_runs ADD COLUMN script_name TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE repl_pattern_observations ADD COLUMN matched_cap TEXT NOT NULL DEFAULT ''`,
+	// v0.58: Origin tool — records which MCP/hook tool triggered a remember() call
+	`ALTER TABLE learnings ADD COLUMN origin_tool TEXT NOT NULL DEFAULT ''`,
 }
 
 // messagesMigrations runs against messages.db (separate from yesmem.db migrations).
 var messagesMigrations = []string{
 	// v0.42: Persist source agent on messages for transparent mixed-agent histories
 	`ALTER TABLE messages ADD COLUMN source_agent TEXT DEFAULT 'claude'`,
+	// v0.43: Index messages.timestamp for date-bounded search/deep_search filters.
+	`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)`,
 }
 
 const tableSessions = `CREATE TABLE IF NOT EXISTS sessions (
@@ -497,7 +537,8 @@ const tableLearnings = `CREATE TABLE IF NOT EXISTS learnings (
 	impact_score        REAL DEFAULT 0.0,
 	impact_count        INTEGER DEFAULT 0,
 	source_msg_from     INTEGER DEFAULT -1,
-	source_msg_to       INTEGER DEFAULT -1
+	source_msg_to       INTEGER DEFAULT -1,
+	origin_tool         TEXT NOT NULL DEFAULT ''
 )`
 
 const tableAssociations = `CREATE TABLE IF NOT EXISTS associations (
@@ -591,6 +632,7 @@ var indices = []string{
 	`CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type)`,
 	`CREATE INDEX IF NOT EXISTS idx_messages_file ON messages(file_path) WHERE file_path IS NOT NULL`,
+	`CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)`,
 	`CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_short)`,
 	`CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_sessions_project_started ON sessions(project, started_at DESC)`,
@@ -797,4 +839,46 @@ const tableProjectScan = `CREATE TABLE IF NOT EXISTS project_scan (
 	git_head   TEXT NOT NULL,
 	cbm_mtime  INTEGER NOT NULL DEFAULT 0,
 	scanned_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)`
+
+const tableSessionActiveCaps = `CREATE TABLE IF NOT EXISTS session_active_caps (
+	thread_id    TEXT NOT NULL,
+	cap_name     TEXT NOT NULL,
+	activated_at INTEGER NOT NULL,
+	last_used_at INTEGER,
+	PRIMARY KEY (thread_id, cap_name)
+)`
+
+const tableScheduledJobs = `CREATE TABLE IF NOT EXISTS scheduled_jobs (
+	id           TEXT PRIMARY KEY,
+	name         TEXT NOT NULL,
+	cron         TEXT NOT NULL,
+	prompt       TEXT NOT NULL,
+	enabled      INTEGER NOT NULL DEFAULT 1,
+	recurring    INTEGER NOT NULL DEFAULT 1,
+	mode         TEXT NOT NULL DEFAULT 'agent',
+	cap_name     TEXT NOT NULL DEFAULT '',
+	script_name  TEXT NOT NULL DEFAULT '',
+	auto_correct INTEGER NOT NULL DEFAULT 1,
+	allowed_ports TEXT NOT NULL DEFAULT '80,443',
+	sandbox      TEXT NOT NULL DEFAULT 'standard',
+	interval_seconds INTEGER NOT NULL DEFAULT 0,
+	model        TEXT NOT NULL DEFAULT '',
+	last_run     DATETIME,
+	created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+)`
+
+const tableBashJobRuns = `CREATE TABLE IF NOT EXISTS bash_job_runs (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	job_id     TEXT NOT NULL,
+	job_name   TEXT NOT NULL,
+	cap_name   TEXT NOT NULL DEFAULT '',
+	script_name TEXT NOT NULL DEFAULT '',
+	command    TEXT NOT NULL,
+	status     TEXT NOT NULL DEFAULT 'ok',
+	exit_code  INTEGER NOT NULL DEFAULT 0,
+	output     TEXT NOT NULL DEFAULT '',
+	error_msg  TEXT NOT NULL DEFAULT '',
+	processed  INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 )`

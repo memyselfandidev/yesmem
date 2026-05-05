@@ -2,6 +2,14 @@ package proxy
 
 import "strings"
 
+// blockText formats a tagged system block with a trailing blank-line separator,
+// so consecutive blocks render as visually distinct sections when the system
+// array is concatenated by the model runtime. Normalizes any existing trailing
+// newlines to exactly two.
+func blockText(tag, content string) string {
+	return "[" + tag + "]\n" + strings.TrimRight(content, "\n") + "\n\n"
+}
+
 // ensureSystemArray converts req["system"] from string to array format if needed.
 // Creates an empty array when system is missing so callers can inject blocks
 // into requests that started without a system prompt.
@@ -33,7 +41,7 @@ func AppendSystemBlock(req map[string]any, tag, content string) {
 	}
 	block := map[string]any{
 		"type": "text",
-		"text": "[" + tag + "]\n" + content,
+		"text": blockText(tag, content),
 	}
 	req["system"] = append(blocks, block)
 }
@@ -46,7 +54,7 @@ func AppendSystemBlockCached(req map[string]any, tag, content string) {
 	}
 	block := map[string]any{
 		"type":          "text",
-		"text":          "[" + tag + "]\n" + content,
+		"text":          blockText(tag, content),
 		"cache_control": cacheControlBlock(),
 	}
 	req["system"] = append(blocks, block)
@@ -69,7 +77,7 @@ func UpsertSystemBlockCached(req map[string]any, tag, content string) {
 		}
 		text, _ := bm["text"].(string)
 		if strings.HasPrefix(text, prefix) {
-			bm["text"] = prefix + "\n" + content
+			bm["text"] = blockText(tag, content)
 			if _, has := bm["cache_control"]; !has && countCacheBreakpoints(req) < maxCacheBreakpoints {
 				bm["cache_control"] = cacheControlBlock()
 			}
@@ -81,7 +89,7 @@ func UpsertSystemBlockCached(req map[string]any, tag, content string) {
 
 	block := map[string]any{
 		"type": "text",
-		"text": prefix + "\n" + content,
+		"text": blockText(tag, content),
 	}
 	if countCacheBreakpoints(req) < maxCacheBreakpoints {
 		block["cache_control"] = cacheControlBlock()
@@ -105,7 +113,7 @@ func ReplaceSystemBlock(req map[string]any, tag, content string) {
 		}
 		text, _ := bm["text"].(string)
 		if strings.HasPrefix(text, prefix) {
-			bm["text"] = prefix + "\n" + content
+			bm["text"] = blockText(tag, content)
 			blocks[i] = bm
 			req["system"] = blocks
 			return

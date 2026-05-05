@@ -59,12 +59,17 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 	if tokenFloor == 0 {
 		tokenFloor = stubThreshold * 80 / 100
 	}
-	// Account for post-pipeline injections (narrative, etc.) that aren't in overhead yet
-	narrativeOverhead := s.countTokens(s.narrative.Render())
-	contentBudget := tokenFloor - overhead - narrativeOverhead
-	if contentBudget < 20000 {
-		contentBudget = 20000 // absolute minimum
+	// Subtract injection overhead so the API-actual after collapse ≈ tokenFloor.
+	// Uses stored overhead from previous cycle (computed at FINAL point).
+	s.injectionOverheadMu.RLock()
+	injectionDelta := s.injectionOverhead[threadID]
+	s.injectionOverheadMu.RUnlock()
+	contentBudget := tokenFloor - overhead - injectionDelta
+	if contentBudget < 10000 {
+		contentBudget = 10000
 	}
+	s.logger.Printf("[req %d] FLOOR: tokenFloor=%dk, overhead=%dk, injectionDelta=%dk, contentBudget=%dk",
+		reqIdx, tokenFloor/1000, overhead/1000, injectionDelta/1000, contentBudget/1000)
 
 	// Calculate cutoff: walk from recent→old until budget exhausted
 	cutoff := CalcCollapseCutoff(messages, s.cfg.KeepRecent, contentBudget, estimateFn)
@@ -274,13 +279,16 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 		}
 	}
 
-	// Inject narrative into system block (replaces previous version)
-	narrativeText := s.narrative.Render()
-	if narrativeText != "" {
-		ReplaceSystemBlock(req, "yesmem-narrative", narrativeText)
-	}
+	// Narrative inject removed: narrative is now part of the cached briefing text
+	// (see composeBriefingText in proxy_briefing.go). ReplaceSystemBlock per
+	// request burned the system-prefix cache because narrative content drifts
+	// between stub cycles. Baking narrative into the briefing turn-pair keeps
+	// the injected bytes stable until sawtooth triggers invalidateThreadCaches,
+	// which calls refreshBriefing → loadBriefing → composeBriefingText and
+	// re-renders fresh narrative state into the new cached snapshot.
 
-	// Strip old narrative messages from stream
+	// Strip old narrative messages from stream (defensive cleanup for any legacy
+	// narrative-as-user-message content that may still live in older sessions).
 	finalMessages = StripOldNarratives(finalMessages)
 
 	// Smart re-expansion: temporarily restore stubs matching user's query
@@ -305,10 +313,17 @@ func (s *Server) runStubCycle(messages []any, req map[string]any, reqIdx int, pr
 	if compressResult.TokensSaved > 0 || cutoff > 0 {
 		finalColor = colorGreen
 	}
-	s.logger.Printf("%s[req %d %s tid=%s] FINAL: %d msgs, %dk msg-tokens, %dk total, compress=-%dk, stubs=%d, narrative=%db%s",
+	s.logger.Printf("%s[req %d %s tid=%s] FINAL: %d msgs, %dk msg-tokens, %dk total, compress=-%dk, stubs=%d%s",
 		finalColor, reqIdx, proj, threadID, len(finalMessages),
 		actualMsgTokens/1000, actualTotalTokens/1000,
-		compressResult.TokensSaved/1000, stubResult.StubCount, len(narrativeText), colorReset)
+		compressResult.TokensSaved/1000, stubResult.StubCount, colorReset)
+
+	// Store injection overhead for next cycle's FLOOR calculation
+	if totalTokens > actualTotalTokens {
+		s.injectionOverheadMu.Lock()
+		s.injectionOverhead[threadID] = totalTokens - actualTotalTokens
+		s.injectionOverheadMu.Unlock()
+	}
 
 	// Track archived topics in narrative (skip on retry)
 	if stubResult.StubCount > 0 && !isRetryReq {

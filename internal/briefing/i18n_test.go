@@ -141,6 +141,19 @@ func TestResolveStringsUsesDefaultsIfNoFile(t *testing.T) {
 	}
 }
 
+func TestMemoryMDNarrativeIsShortRedirect(t *testing.T) {
+	s := DefaultStrings()
+	if s.MemoryMDNarrative == "" {
+		t.Error("MemoryMDNarrative should not be empty")
+	}
+	if len(s.MemoryMDNarrative) > 300 {
+		t.Errorf("MemoryMDNarrative too long: %d chars, should be short redirect", len(s.MemoryMDNarrative))
+	}
+	if !findSubstr(s.MemoryMDNarrative, "briefing") && !findSubstr(s.MemoryMDNarrative, "Briefing") {
+		t.Error("MemoryMDNarrative should reference the briefing as canonical source")
+	}
+}
+
 func TestForkReflectionStringsExist(t *testing.T) {
 	s := DefaultStrings()
 	if s.ForkReflectionIntro == "" {

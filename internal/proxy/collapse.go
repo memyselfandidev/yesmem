@@ -22,7 +22,10 @@ func CalcCollapseCutoff(messages []any, keepRecent int, tokenFloor int, estimate
 	var kept int
 	// Walk backwards from last message; stop when we've accumulated enough
 	// to reach the floor. Everything before that index can be collapsed.
-	// Index 0 is system message — never collapse it.
+	// Index 0 is the original first user turn (Anthropic API has system as a
+	// separate top-level field, so messages[0] is in fact a user message).
+	// Skipped here so its bytes stay stable for the frozen-prefix cache;
+	// CollapseOldMessages does the one-time content blanking on collapse.
 	cutoff := -1
 	for i := n - 1; i >= 1; i-- {
 		msg, ok := messages[i].(map[string]any)
@@ -71,9 +74,10 @@ func CalcCollapseCutoff(messages []any, keepRecent int, tokenFloor int, estimate
 }
 
 // CollapseOldMessages replaces all messages before cutoffIdx with a single
-// archive summary block. The system message (index 0) is preserved.
+// archive summary block. messages[0] is kept as the first slot (role
+// preserved) but its content is blanked to "-" — see blankFirstMessage.
 // Original messages are used for stats extraction, modified for size estimation.
-// Returns a new slice: [system, archive_block, messages[cutoffIdx:]...]
+// Returns a new slice: [blanked_first, archive_block, messages[cutoffIdx:]...]
 func CollapseOldMessages(modified, original []any, cutoffIdx int, sessionStart, sessionEnd time.Time, learnings []ArchiveLearning, flavors []ArchiveSessionFlavor, threadID ...string) []any {
 	if cutoffIdx < minCollapseMessages || cutoffIdx >= len(modified) {
 		return modified
@@ -99,9 +103,9 @@ func CollapseOldMessages(modified, original []any, cutoffIdx int, sessionStart, 
 	}
 	archiveContent := buildArchiveBlock(1, cutoffIdx-1, stats, tid)
 
-	// Build result: system + archive + recent
+	// Build result: blanked-first + archive + recent
 	result := make([]any, 0, 2+len(modified)-cutoffIdx)
-	result = append(result, modified[0]) // system message
+	result = append(result, blankFirstMessage(modified[0]))
 	result = append(result, map[string]any{
 		"role":    "user",
 		"content": archiveContent,
@@ -109,6 +113,26 @@ func CollapseOldMessages(modified, original []any, cutoffIdx int, sessionStart, 
 	result = append(result, modified[cutoffIdx:]...)
 
 	return result
+}
+
+// blankFirstMessage returns a shallow copy of the first message with its
+// content replaced by "-". The proxy assembles requests in Anthropic API
+// shape — system is a separate top-level field, so messages[0] is in fact
+// the original first user turn. Without blanking, the model latches onto
+// stale opening framing in every collapsed session. Blanking content while
+// preserving role keeps the cache prefix byte-stable on subsequent requests
+// (one-time cache invalidation on the first collapse after deploy).
+func blankFirstMessage(m any) any {
+	src, ok := m.(map[string]any)
+	if !ok {
+		return m
+	}
+	out := make(map[string]any, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	out["content"] = "-"
+	return out
 }
 
 // buildArchiveBlock creates the summary text for collapsed messages.

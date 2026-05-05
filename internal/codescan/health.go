@@ -101,7 +101,6 @@ func RenderCodeHealth(health CodeHealth) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("### Code Health\n")
 
 	if health.TodoCount > 0 {
 		b.WriteString(fmt.Sprintf("- %d TODO/FIXME/HACK comments\n", health.TodoCount))

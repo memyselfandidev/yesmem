@@ -159,12 +159,18 @@ func renderMedium(result *ScanResult, importedBy map[string][]string) string {
 	return b.String()
 }
 
-// renderLarge: Spec Ebene 1 table format — sorted by file count, descriptions, collapsed tail.
+// renderLarge: Spec Ebene 1 table format — activity-sorted, top-10, wiki-link.
 func renderLarge(result *ScanResult, priority map[string]int, importedBy map[string][]string) string {
-	// Sort packages by file count descending
 	pkgs := make([]PackageInfo, len(result.Packages))
 	copy(pkgs, result.Packages)
+
+	// Sort by 7-day activity score (ActiveZones), then file count, then name.
+	activityScore := buildActivityScore(result.ActiveZones)
 	sort.Slice(pkgs, func(i, j int) bool {
+		si, sj := activityScore[pkgs[i].Name], activityScore[pkgs[j].Name]
+		if si != sj {
+			return si > sj
+		}
 		if pkgs[i].FileCount != pkgs[j].FileCount {
 			return pkgs[i].FileCount > pkgs[j].FileCount
 		}
@@ -182,22 +188,19 @@ func renderLarge(result *ScanResult, priority map[string]int, importedBy map[str
 	b.WriteString(fmt.Sprintf("## Code Map\n**%s** (%d files, %d packages)\n\n",
 		projectName, result.Stats.FileCount, len(result.Packages)))
 
+	// Wiki-link block FIRST — top of codemap, before the package table.
+	// Position here ensures agents see it before diving into the table rows.
+	b.WriteString(renderWikiLink(projectName))
+
 	// Table header
 	b.WriteString("| Package | Files | Description |\n")
 	b.WriteString("|---------|-------|-------------|\n")
 
-	// Top packages get individual rows (threshold: >5 files or top 10)
-	const collapseThreshold = 5
+	// Top 10 packages get individual rows.
 	const maxTopRows = 10
-	topCount := 0
-	for i, pkg := range pkgs {
-		if i >= maxTopRows || (i > 0 && pkg.FileCount <= collapseThreshold) {
-			break
-		}
-		topCount++
-	}
-	if topCount < 1 && len(pkgs) > 0 {
-		topCount = 1
+	topCount := maxTopRows
+	if topCount > len(pkgs) {
+		topCount = len(pkgs)
 	}
 
 	for _, pkg := range pkgs[:topCount] {
@@ -220,28 +223,16 @@ func renderLarge(result *ScanResult, priority map[string]int, importedBy map[str
 		}
 	}
 
-	// Remaining packages: individual rows with descriptions (not collapsed)
+	// Remaining packages: collapsed with top-5 name-drops for discovery.
 	if len(pkgs) > topCount {
 		remaining := pkgs[topCount:]
-		for _, pkg := range remaining {
-			desc := pkg.Description
-			if desc == "" {
-				desc = "—"
-			}
-			if len(desc) > 80 {
-				desc = desc[:77] + "..."
-			}
-			annotation := ""
-			if pkg.GotchaCount > 0 {
-				annotation = fmt.Sprintf(" *(%d gotchas)*", pkg.GotchaCount)
-			}
-			b.WriteString(fmt.Sprintf("| %s | %d | %s%s |\n", pkg.Name, pkg.FileCount, desc, annotation))
-
-			if b.Len() > maxCodeMapBytes {
-				b.WriteString("\n... (truncated to fit token budget)\n")
-				return b.String()
-			}
+		drop := min(5, len(remaining))
+		names := make([]string, drop)
+		for i := 0; i < drop; i++ {
+			names[i] = remaining[i].Name
 		}
+		b.WriteString(fmt.Sprintf("\n*+%d packages: %s — see `index.md`\n",
+			len(pkgs)-topCount, strings.Join(names, ", ")))
 	}
 
 	testCount := countTests(result.Files)
@@ -249,22 +240,25 @@ func renderLarge(result *ScanResult, priority map[string]int, importedBy map[str
 		b.WriteString(fmt.Sprintf("\n*+ %d test files*\n", testCount))
 	}
 
-	// Enrichment sections from CBM graph data
+	// Enrichment sections — surface-only after shrink (deep-dive lives in wiki).
 	health := renderTestCoverageStats(result.Packages)
 	entry := renderEntryPoints(result.EntryPoints)
-	keys := renderKeyFiles(result.KeyFiles)
-	coupling := renderChangeCoupling(result.ChangeCoupling, 10)
-	active := renderActiveZones(result.ActiveZones, 10)
-	if health != "" || entry != "" || keys != "" || coupling != "" || active != "" {
+	if health != "" || entry != "" {
 		b.WriteString("### Code Health\n")
 		b.WriteString(health)
 		b.WriteString(entry)
-		b.WriteString(keys)
-		b.WriteString(coupling)
-		b.WriteString(active)
 	}
 
 	return b.String()
+}
+
+// buildActivityScore maps package-name → 7-day change count from ActiveZones.
+func buildActivityScore(zones []ActiveZone) map[string]int {
+	score := make(map[string]int, len(zones))
+	for _, z := range zones {
+		score[z.Package] += z.ChangeCount
+	}
+	return score
 }
 
 func countTests(files []FileInfo) int {

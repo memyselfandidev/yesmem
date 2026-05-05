@@ -48,14 +48,14 @@ func TestRenderKnowledgeTopology_DepthLabels(t *testing.T) {
 		{Label: "extraction pipeline", Count: 30},
 	}
 	weak := []ClusterSummary{
-		{Label: "telegram adapter", Count: 3},
+		{Label: "config loading", Count: 3},
 	}
 	result := renderKnowledgeTopology(strong, weak, defaultStrings())
 
 	if !strings.Contains(result, "proxy architecture") {
 		t.Error("should contain strong cluster label")
 	}
-	if !strings.Contains(result, "telegram adapter") {
+	if !strings.Contains(result, "config loading") {
 		t.Error("should contain weak cluster label")
 	}
 	// Strong clusters should have depth indicator

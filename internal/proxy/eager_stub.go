@@ -13,7 +13,11 @@ const eagerStubTokenThreshold = 500
 // Only stubs tool_results that (a) exceed the token threshold and (b) have a
 // following assistant turn (meaning Claude already processed them).
 // Operates in the uncached zone — zero prompt cache cost.
-func EagerStubToolResults(messages []any, frozenBoundary int, estimateTokens TokenEstimateFunc) []any {
+func EagerStubToolResults(messages []any, frozenBoundary int, estimateTokens TokenEstimateFunc, opts ...EagerStubOption) []any {
+	cfg := &eagerStubConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
 	result := make([]any, len(messages))
 	copy(result, messages)
 
@@ -35,7 +39,23 @@ func EagerStubToolResults(messages []any, frozenBoundary int, estimateTokens Tok
 				break
 			}
 		}
-		if !hasFollowingAssistant {
+
+		hasMemoryStub := false
+		if cfg.memory != nil && cfg.threadID != "" {
+			for _, block := range blocks {
+				b, ok := block.(map[string]any)
+				if !ok || b["type"] != "tool_result" {
+					continue
+				}
+				id, _ := b["tool_use_id"].(string)
+				if id != "" && cfg.memory.WasStubbed(cfg.threadID, id) {
+					hasMemoryStub = true
+					break
+				}
+			}
+		}
+
+		if !hasFollowingAssistant && !hasMemoryStub {
 			continue
 		}
 
@@ -57,10 +77,21 @@ func EagerStubToolResults(messages []any, frozenBoundary int, estimateTokens Tok
 				continue
 			}
 
+			toolUseID, _ := b["tool_use_id"].(string)
 			content := extractToolResultText(b)
-			if estimateTokens(content) <= eagerStubTokenThreshold {
-				newBlocks = append(newBlocks, block)
-				continue
+
+			memoryHit := cfg.memory != nil && cfg.threadID != "" && toolUseID != "" &&
+				cfg.memory.WasStubbed(cfg.threadID, toolUseID)
+
+			if !memoryHit {
+				if !hasFollowingAssistant {
+					newBlocks = append(newBlocks, block)
+					continue
+				}
+				if estimateTokens(content) <= eagerStubTokenThreshold {
+					newBlocks = append(newBlocks, block)
+					continue
+				}
 			}
 
 			stub := buildEagerStub(toolName, toolInput, content)
@@ -71,6 +102,19 @@ func EagerStubToolResults(messages []any, frozenBoundary int, estimateTokens Tok
 			newBlock["content"] = stub
 			newBlocks = append(newBlocks, newBlock)
 			anyChanged = true
+
+			if memoryHit {
+				if cfg.stickyHits != nil {
+					*cfg.stickyHits++
+				}
+			} else {
+				if cfg.freshStubs != nil {
+					*cfg.freshStubs++
+				}
+				if cfg.memory != nil && cfg.threadID != "" && toolUseID != "" {
+					cfg.memory.RecordStubbed(cfg.threadID, toolUseID)
+				}
+			}
 		}
 
 		if anyChanged {

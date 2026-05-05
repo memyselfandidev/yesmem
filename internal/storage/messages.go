@@ -135,6 +135,14 @@ func sanitizeFTS5Query(query string) string {
 // SearchMessages performs FTS5 full-text search over messages.
 // Replaces Bleve-based search.
 func (s *Store) SearchMessages(query string, limit int) ([]MessageSearchResult, error) {
+	return s.SearchMessagesCtx(query, "", "", limit)
+}
+
+// SearchMessagesCtx is SearchMessages with optional inclusive lower bound (since)
+// and exclusive upper bound (before). Empty strings disable the respective bound.
+// ISO-8601 timestamps compare lexicographically, so "2026-04-28" matches everything
+// from that day onward (inclusive) and "2026-04-29" excludes that day onward.
+func (s *Store) SearchMessagesCtx(query, since, before string, limit int) ([]MessageSearchResult, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -142,13 +150,24 @@ func (s *Store) SearchMessages(query string, limit int) ([]MessageSearchResult, 
 	if ftsQuery == "" {
 		return nil, nil
 	}
-	rows, err := s.messagesReaderDB().Query(`
+	sql := `
 		SELECT m.id, m.session_id, COALESCE(m.source_agent, 'claude'), m.content, m.message_type, m.timestamp, COALESCE(m.sequence, 0), bm25(messages_fts) as rank
 		FROM messages_fts
 		JOIN messages m ON m.id = messages_fts.rowid
-		WHERE messages_fts MATCH ?
-		ORDER BY rank
-		LIMIT ?`, ftsQuery, limit)
+		WHERE messages_fts MATCH ?`
+	args := []any{ftsQuery}
+	if since != "" {
+		sql += ` AND m.timestamp >= ?`
+		args = append(args, since)
+	}
+	if before != "" {
+		sql += ` AND m.timestamp < ?`
+		args = append(args, before)
+	}
+	sql += ` ORDER BY rank LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.messagesReaderDB().Query(sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search messages: %w", err)
 	}
@@ -166,21 +185,25 @@ func (s *Store) SearchMessages(query string, limit int) ([]MessageSearchResult, 
 }
 
 // SearchMessagesDeep performs FTS5 search with optional type filtering for deep_search.
-// Uses the same fast FTS5 query as SearchMessages, filters by type in Go to avoid slow IN clause.
+// Type filter is applied in SQL via IN-clause so narrow date windows dominated by
+// excluded types (e.g. tool_use) cannot collapse the result set.
 func (s *Store) SearchMessagesDeep(query string, includeThinking, includeCommands bool, limit int) ([]MessageSearchResult, error) {
+	return s.SearchMessagesDeepCtx(query, includeThinking, includeCommands, "", "", limit)
+}
+
+// SearchMessagesDeepCtx is SearchMessagesDeep with optional inclusive lower bound (since)
+// and exclusive upper bound (before). Empty strings disable the respective bound.
+func (s *Store) SearchMessagesDeepCtx(query string, includeThinking, includeCommands bool, since, before string, limit int) ([]MessageSearchResult, error) {
 	if limit <= 0 {
 		limit = 10
 	}
 
-	// Build allowed types set
-	allowed := map[string]bool{"text": true, "assistant": true, "user": true}
+	allowed := []string{"text", "assistant", "user"}
 	if includeThinking {
-		allowed["thinking"] = true
+		allowed = append(allowed, "thinking")
 	}
 	if includeCommands {
-		allowed["tool_use"] = true
-		allowed["tool_result"] = true
-		allowed["bash_output"] = true
+		allowed = append(allowed, "tool_use", "tool_result", "bash_output")
 	}
 
 	ftsQuery := sanitizeFTS5Query(query)
@@ -188,14 +211,32 @@ func (s *Store) SearchMessagesDeep(query string, includeThinking, includeCommand
 		return nil, nil
 	}
 
-	// Over-fetch to account for type filtering
-	rows, err := s.messagesReaderDB().Query(`
+	placeholders := strings.Repeat("?,", len(allowed))
+	placeholders = placeholders[:len(placeholders)-1]
+
+	sql := `
 		SELECT m.id, m.session_id, COALESCE(m.source_agent, 'claude'), m.content, m.message_type, m.timestamp, COALESCE(m.sequence, 0), bm25(messages_fts) as rank
 		FROM messages_fts
 		JOIN messages m ON m.id = messages_fts.rowid
 		WHERE messages_fts MATCH ?
-		ORDER BY rank
-		LIMIT ?`, ftsQuery, limit*5)
+		  AND m.message_type IN (` + placeholders + `)`
+	args := []any{ftsQuery}
+	for _, t := range allowed {
+		args = append(args, t)
+	}
+	if since != "" {
+		sql += ` AND m.timestamp >= ?`
+		args = append(args, since)
+	}
+	if before != "" {
+		sql += ` AND m.timestamp < ?`
+		args = append(args, before)
+	}
+	// Multiplier guards against handler-side post-filtering (project, excludeSession).
+	sql += ` ORDER BY rank LIMIT ?`
+	args = append(args, limit*20)
+
+	rows, err := s.messagesReaderDB().Query(sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("deep search messages: %w", err)
 	}
@@ -207,11 +248,9 @@ func (s *Store) SearchMessagesDeep(query string, includeThinking, includeCommand
 		if err := rows.Scan(&r.ID, &r.SessionID, &r.SourceAgent, &r.Content, &r.MessageType, &r.Timestamp, &r.Sequence, &r.Rank); err != nil {
 			return nil, err
 		}
-		if allowed[r.MessageType] {
-			results = append(results, r)
-			if len(results) >= limit {
-				break
-			}
+		results = append(results, r)
+		if len(results) >= limit {
+			break
 		}
 	}
 	return results, rows.Err()

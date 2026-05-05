@@ -25,7 +25,10 @@ type StubResult struct {
 
 // Stubify inspects the messages array and replaces older messages with reference stubs
 // when the estimated token count exceeds the threshold.
-// It preserves: first message (system), last keepRecent messages, decision messages.
+// It preserves: messages[0] (Anthropic API has system as a separate top-level
+// field, so messages[0] is the first user turn — kept here so its bytes stay
+// stable between collapse rounds; CollapseOldMessages blanks its content once
+// when it actually fires), the last keepRecent messages, and decision messages.
 // If decay is non-nil, already-stubbed messages are further compressed based on age.
 func Stubify(messages []any, threshold, keepRecent, requestIdx int, annotations map[string]string, pivotTexts []string, estimateTokens TokenEstimateFunc, decay ...*DecayTracker) StubResult {
 	return stubifyInternal(messages, threshold, keepRecent, requestIdx, annotations, pivotTexts, estimateTokens, 0, decay...)
@@ -57,7 +60,10 @@ func stubifyInternal(messages []any, threshold, keepRecent, requestIdx int, anno
 	}
 
 	// Determine protected zones
-	// Zone 1: First message (system prompt or compact summary)
+	// Zone 1: messages[0] (Anthropic API: system is a separate top-level field,
+	// so messages[0] is the original first user turn — kept verbatim here so
+	// the frozen-prefix bytes stay stable; CollapseOldMessages does the
+	// one-time content blanking when collapse actually fires)
 	// Zone 2: Last keepRecent messages
 	protectedTail := len(messages) - keepRecent
 	if protectedTail < 1 {

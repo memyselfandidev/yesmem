@@ -52,6 +52,8 @@ That's where you start. Not from zero. From where it matters.
 
 - **Right docs at the right time:** you're using an unfamiliar API and Claude guesses wrong. You indexed the docs once, now Claude searches them on demand and gets the actual function signatures instead of guessing.
 
+- **Understands your codebase:** YesMem scans your code, builds a graph of functions, types, and call chains, and steers Claude toward that graph instead of shelling out to grep. Faster, less context burn, better results. Worktree-aware — branches share the same index.
+
 - **Parallel work:** one agent refactors the auth module, another writes tests, a third updates the docs. They share state, talk to each other, and you watch them work. Heartbeat, crash recovery, cascade shutdown built in.
 
 - **Self-cleaning:** Claude gets stuck in a loop, suggesting the same broken approach three times. YesMem detects it, quarantines the learnings from that session. The knowledge base maintains itself.
@@ -95,7 +97,7 @@ All data local. No cloud. No external dependencies. Pure Go — no CGo, no C com
 
 ## Features
 
-50 MCP tools · ~130 daemon RPCs · 53 CLI commands — **[full reference →](Features.md)**
+67 MCP tools · ~130 daemon RPCs · 53 CLI commands — **[full reference →](Features.md)**
 
 ### Find & Remember
 - **Find anything across all sessions** — full-text + semantic search combined via Reciprocal Rank Fusion
@@ -138,8 +140,15 @@ The proxy is **optional**. YesMem works fully without it — all MCP tools, brie
 - **Knows what it doesn't know** — tracks knowledge gaps, auto-resolves when answers arrive
 - **Self-cleaning** — detects fixation loops, quarantines bad learnings automatically
 
+### Code Intelligence
+- **Pre-built code graph** — scans your codebase (Go, Python, TypeScript, Java, PHP, Rust, and more), builds a symbol graph with functions, types, call edges, and import chains
+- **Graph-first navigation** — Claude uses `search_code_index`, `get_file_symbols`, `get_code_snippet` instead of spawning agents or shelling out to grep. Faster, cheaper, more accurate
+- **Code Map at session start** — package table, key files, entry points, active zones (7-day change frequency), change coupling — injected automatically
+- **Worktree-aware** — git worktrees share the same scan cache, learnings, and project identity. No other memory system handles this
+- **Gotcha decay** — stale gotchas fade, fresh ones surface. Precision-based scoring with tiered output eliminates noise from resolved issues
+
 ### Tools & CLI
-- **50 MCP tools** — search, remember, personas, plans, agents, docs, scratchpad, config
+- **67 MCP tools** — search, remember, code intelligence, capabilities, personas, plans, agents, docs, scratchpad, config
 - **~53 CLI commands** — daemon, proxy, setup, extraction, benchmarking, export/import, cost tracking
 - **~130 daemon RPC methods** — full programmatic access
 
@@ -161,6 +170,7 @@ The proxy is **optional**. YesMem works fully without it — all MCP tools, brie
 | Data location | Cloud/hybrid | Local only (`~/.claude/yesmem/`) |
 | Search | Keyword OR semantic | Hybrid BM25 + 512d vectors, Reciprocal Rank Fusion |
 | Architecture | Python/Node service + dependencies | Single Go binary, no CGo, no runtime dependencies |
+| Code understanding | None or external tools | Pre-built code graph, graph-first steering, worktree-aware indexing |
 
 ## Benchmarks
 

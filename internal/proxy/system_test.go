@@ -90,8 +90,8 @@ func TestReplaceSystemBlock_ReplacesExisting(t *testing.T) {
 	}
 	second := blocks[1].(map[string]any)
 	text, _ := second["text"].(string)
-	if text != "[yesmem-narrative]\nnew content" {
-		t.Errorf("expected replaced content, got: %s", text)
+	if text != "[yesmem-narrative]\nnew content\n\n" {
+		t.Errorf("expected replaced content, got: %q", text)
 	}
 }
 
@@ -109,8 +109,8 @@ func TestReplaceSystemBlock_AppendsIfNotFound(t *testing.T) {
 	}
 	second := blocks[1].(map[string]any)
 	text, _ := second["text"].(string)
-	if text != "[yesmem-narrative]\nnew content" {
-		t.Errorf("expected appended content, got: %s", text)
+	if text != "[yesmem-narrative]\nnew content\n\n" {
+		t.Errorf("expected appended content, got: %q", text)
 	}
 }
 
@@ -183,8 +183,8 @@ func TestUpsertSystemBlockCached_ReplacesExistingWithoutDuplication(t *testing.T
 		t.Fatalf("expected 2 blocks, got %d", len(blocks))
 	}
 	second := blocks[1].(map[string]any)
-	if text, _ := second["text"].(string); text != "[yesmem-briefing]\nnew briefing" {
-		t.Fatalf("unexpected text: %s", text)
+	if text, _ := second["text"].(string); text != "[yesmem-briefing]\nnew briefing\n\n" {
+		t.Fatalf("unexpected text: %q", text)
 	}
 	if _, ok := second["cache_control"]; !ok {
 		t.Fatal("existing cache_control should be preserved")
@@ -210,8 +210,8 @@ func TestReplaceSystemBlock_PreservesCacheControl(t *testing.T) {
 		t.Error("cache_control should be preserved after replace")
 	}
 	text, _ := second["text"].(string)
-	if text != "[yesmem-briefing]\nnew briefing" {
-		t.Errorf("text not replaced: %s", text)
+	if text != "[yesmem-briefing]\nnew briefing\n\n" {
+		t.Errorf("text not replaced: %q", text)
 	}
 }
 

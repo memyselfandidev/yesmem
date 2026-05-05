@@ -13,21 +13,23 @@ import (
 
 // Config holds all YesMem configuration.
 type Config struct {
-	Extraction ExtractionConfig          `yaml:"extraction"`
-	Evolution  EvolutionConfig           `yaml:"evolution"`
-	Briefing   BriefingConfig            `yaml:"briefing"`
-	API        APIConfig                 `yaml:"api"`
-	LLM        LLMConfig                 `yaml:"llm"`
-	Pricing    map[string]ModelPricing   `yaml:"pricing"`
-	Paths      PathsConfig               `yaml:"paths"`
-	Embedding  embedding.EmbeddingConfig `yaml:"embedding"`
-	Proxy      ProxyConfig               `yaml:"proxy"`
-	Signals    SignalsConfig             `yaml:"signals"`
-	ClaudeMd   ClaudeMdConfig            `yaml:"claudemd"`
-	HTTP       HTTPConfig                `yaml:"http"`
-	Update     UpdateConfig              `yaml:"update"`
-	Agents       AgentsConfig              `yaml:"agents"`
-	ForkedAgents ForkedAgentsConfig        `yaml:"forked_agents"`
+	Extraction            ExtractionConfig          `yaml:"extraction"`
+	Evolution             EvolutionConfig           `yaml:"evolution"`
+	Briefing              BriefingConfig            `yaml:"briefing"`
+	API                   APIConfig                 `yaml:"api"`
+	LLM                   LLMConfig                 `yaml:"llm"`
+	Pricing               map[string]ModelPricing   `yaml:"pricing"`
+	Paths                 PathsConfig               `yaml:"paths"`
+	Embedding             embedding.EmbeddingConfig `yaml:"embedding"`
+	Proxy                 ProxyConfig               `yaml:"proxy"`
+	Signals               SignalsConfig             `yaml:"signals"`
+	ClaudeMd              ClaudeMdConfig            `yaml:"claudemd"`
+	HTTP                  HTTPConfig                `yaml:"http"`
+	Update                UpdateConfig              `yaml:"update"`
+	Agents                AgentsConfig              `yaml:"agents"`
+	ForkedAgents          ForkedAgentsConfig        `yaml:"forked_agents"`
+	DefaultSandboxProfile string                    `yaml:"default_sandbox_profile"`
+	SecretsSanitization   SecretsSanitizationConfig `yaml:"secrets_sanitization"`
 }
 
 // ModelPricing holds per-million-token pricing for a model.
@@ -40,10 +42,18 @@ type ModelPricing struct {
 type AgentsConfig struct {
 	Terminal       string `yaml:"terminal"`        // Preferred terminal: ghostty, kitty, gnome-terminal, alacritty, wezterm, xterm. Empty = auto-detect.
 	ViewerTerminal string `yaml:"viewer_terminal"` // Terminal for showing yesmem-agents session. Falls back to terminal if empty.
-	MaxRuntime  string `yaml:"max_runtime"`  // Max runtime per agent (Go duration: "30m", "1h"). Empty = 30m default.
-	MaxTurns    int    `yaml:"max_turns"`    // Max relay turns per agent. 0 = 30 default.
-	MaxDepth    int    `yaml:"max_depth"`    // Max spawn depth (agent→sub-agent). 0 = 3 default.
-	TokenBudget int    `yaml:"token_budget"` // Max tokens per agent (input+output combined). 0 = 500000 default. Overridable per spawn.
+	MaxRuntime     string `yaml:"max_runtime"`     // Max runtime per agent (Go duration: "30m", "1h"). Empty = 30m default.
+	MaxTurns       int    `yaml:"max_turns"`       // Max relay turns per agent. 0 = 30 default.
+	MaxDepth       int    `yaml:"max_depth"`       // Max spawn depth (agent→sub-agent). 0 = 3 default.
+	TokenBudget    int    `yaml:"token_budget"`    // Max tokens per agent (input+output combined). 0 = 500000 default. Overridable per spawn.
+}
+
+// SecretsSanitizationConfig konfiguriert die SecretRedactor-Pipeline.
+// Wenn Enabled=true, werden alle LLM-Inputs/Outputs und Bash-Job-Outputs
+// durch den SecretRedactor geschickt bevor sie persistiert werden.
+type SecretsSanitizationConfig struct {
+	Enabled           bool     `yaml:"enabled"`
+	AllowedExceptions []string `yaml:"allowed_exceptions"`
 }
 
 // ForkedAgentsConfig controls the forked agent proxy feature.
@@ -83,27 +93,39 @@ type SignalsConfig struct {
 
 // ProxyConfig controls the infinite-thread proxy.
 type ProxyConfig struct {
-	Enabled               bool    `yaml:"enabled"`                 // auto-start proxy with daemon
-	Listen                string  `yaml:"listen"`                  // listen address, e.g. ":9099"
-	Target                string  `yaml:"target"`                  // target API URL, e.g. "https://api.anthropic.com"
-	OpenAITarget          string  `yaml:"openai_target"`           // upstream for OpenAI-format clients (default: "https://api.openai.com")
-	TokenThreshold        int     `yaml:"token_threshold"`         // trigger stubbing above this token count (default: 180000)
-	TokenMinimumThreshold int     `yaml:"token_minimum_threshold"` // stub down to this floor (default: 80000)
-	KeepRecent            int     `yaml:"keep_recent"`             // messages to always keep unmodified
-	SawtoothEnabled       bool    `yaml:"sawtooth_enabled"`        // use sawtooth cache optimization (default: true)
-	CacheTTL              string  `yaml:"cache_ttl"`               // "ephemeral" (5m, default) or "1h" (extended, 2× write cost)
-	UsageDeflationFactor  float64        `yaml:"usage_deflation_factor"`  // scale input_tokens reported to CC (0=off, 0.7=70%)
-	TokenThresholds       map[string]int `yaml:"token_thresholds"`        // model-specific thresholds: {"opus": 180000, "haiku": 130000}
-	PromptUngate  bool   `yaml:"prompt_ungate"`  // strip CLAUDE.md subordination disclaimer (default: true)
-	PromptRewrite bool   `yaml:"prompt_rewrite"` // strip output-throttling + inject quality directives (default: false)
-	PromptEnhance bool   `yaml:"prompt_enhance"` // CLAUDE.md authority boost, comment discipline, persona tone (default: false)
-	EffortFloor     string `yaml:"effort_floor"`      // minimum effort level: "low", "medium", "high", "max" (default: "" = off)
-	SkillEvalInject string `yaml:"skill_eval_inject"` // "true" = verbose eval output, "silent" = internal eval only, "false" = disabled (default: "silent")
+	Enabled                  bool           `yaml:"enabled"`                    // auto-start proxy with daemon
+	Listen                   string         `yaml:"listen"`                     // listen address, e.g. ":9099"
+	Target                   string         `yaml:"target"`                     // target API URL, e.g. "https://api.anthropic.com"
+	OpenAITarget             string         `yaml:"openai_target"`              // upstream for OpenAI-format clients (default: "https://api.openai.com")
+	TokenThreshold           int            `yaml:"token_threshold"`            // trigger stubbing above this token count (default: 180000)
+	TokenMinimumThreshold    int            `yaml:"token_minimum_threshold"`    // stub down to this floor (default: 80000)
+	KeepRecent               int            `yaml:"keep_recent"`                // messages to always keep unmodified
+	SawtoothEnabled          bool           `yaml:"sawtooth_enabled"`           // use sawtooth cache optimization (default: true)
+	CacheTTL                 string         `yaml:"cache_ttl"`                  // "ephemeral" (5m, default) or "1h" (extended, 2× write cost)
+	UsageDeflationFactor     float64        `yaml:"usage_deflation_factor"`     // scale input_tokens reported to CC (0=off, 0.7=70%)
+	TokenThresholds          map[string]int `yaml:"token_thresholds"`           // model-specific thresholds: {"opus": 180000, "haiku": 130000}
+	PromptUngate             bool           `yaml:"prompt_ungate"`              // strip CLAUDE.md subordination disclaimer (default: true)
+	PromptRewrite            bool           `yaml:"prompt_rewrite"`             // strip output-throttling + inject quality directives (default: false)
+	PromptEnhance            bool           `yaml:"prompt_enhance"`             // CLAUDE.md authority boost, comment discipline, persona tone (default: false)
+	PromptToolPrefs          bool           `yaml:"prompt_tool_prefs"`          // inject [yesmem-tool-prefs] Edit/Write preference + error-semantics warning (default: true)
+	PromptOutputDiscipline   bool           `yaml:"prompt_output_discipline"`   // inject [yesmem-output-discipline] no-preamble + no-skill-eval + exploratory-heuristic (default: true)
+	PromptCodingDiscipline   bool           `yaml:"prompt_coding_discipline"`   // inject [yesmem-coding-discipline] read-before-propose + no-brute-force + no-half-finished (default: true)
+	PromptBeweislast         bool           `yaml:"prompt_beweislast"`          // inject [yesmem-beweislast] fabrication-guard + claim-vs-proof + stance-under-challenge + tool-result-honesty + long-context-erosion (default: true)
+	PromptScopeDiscipline    bool           `yaml:"prompt_scope_discipline"`    // inject [yesmem-scope-discipline] deliver-A-not-A+B+C + adjacent-findings-separate + scope-bound-authorization (default: true)
+	PromptDelegationContract bool           `yaml:"prompt_delegation_contract"` // inject [yesmem-delegation-contract] self-contained-prompts + parallel-dispatch (default: true)
+	PromptClarifyFirst       bool           `yaml:"prompt_clarify_first"`       // inject [yesmem-clarify-first] clarify only when alternative interpretations produce materially different work (default: true)
+	PromptCodeToolsFirst     bool           `yaml:"prompt_code_tools_first"`    // inject [yesmem-code-tools-first] prefer MCP code-navigation tools over Agent spawns (default: true)
+	PromptPatternSuggest     bool           `yaml:"prompt_pattern_suggest"`     // record repeated shell-command shapes for recorder-only cap-suggestion analysis (default: true)
+	EffortFloor              string         `yaml:"effort_floor"`               // minimum effort level: "low", "medium", "high", "max" (default: "" = off)
+	SkillEvalInject          string         `yaml:"skill_eval_inject"`          // "true" = verbose eval output, "silent" = internal eval only, "false" = disabled (default: "silent")
 
-	CacheKeepaliveEnabled bool   `yaml:"cache_keepalive_enabled"` // send keepalive pings to prevent cache expiry (default: true)
-	CacheKeepaliveMode    string `yaml:"cache_keepalive_mode"`    // "auto" (detect from response), "5m", "1h" (default: "5m")
+	CacheKeepaliveEnabled bool   `yaml:"cache_keepalive_enabled"`  // send keepalive pings to prevent cache expiry (default: true)
+	CacheKeepaliveMode    string `yaml:"cache_keepalive_mode"`     // "auto" (detect from response), "5m", "1h" (default: "5m")
 	CacheKeepalivePings5m int    `yaml:"cache_keepalive_pings_5m"` // pings per idle phase when TTL=5min (default: 5)
 	CacheKeepalivePings1h int    `yaml:"cache_keepalive_pings_1h"` // pings per idle phase when TTL=1h (default: 1)
+
+	CodeNavMode         string `yaml:"code_nav_mode"`          // "block", "nudge", or "off" (default: "block")
+	CodeNavDismissCount int    `yaml:"code_nav_dismiss_count"` // permanent-off after N dismissals (default: 5)
 }
 
 // HTTPConfig controls the OpenClaw HTTP API server.
@@ -115,25 +137,25 @@ type HTTPConfig struct {
 
 // ExtractionConfig controls LLM-based knowledge extraction.
 type ExtractionConfig struct {
-	Model          string `yaml:"model"`            // Pass 2 extraction model (default: sonnet)
-	SummarizeModel string `yaml:"summarize_model"`  // Pass 1 summarization model (default: haiku)
-	QualityModel   string `yaml:"quality_model"`    // Pass 2 quality refinement (default: narrative_model)
-	NarrativeModel string `yaml:"narrative_model"`  // narrative generation (default: opus)
-	Mode           string `yaml:"mode"`             // single (legacy), two-pass (default)
-	ChunkSize      int    `yaml:"chunk_size"`       // tokens per chunk
-	AutoExtract    bool   `yaml:"auto_extract"`     // run after each session?
-	MaxAgeDays     int    `yaml:"max_age_days"`     // 0 = all sessions, N = only last N days
-	MaxPerRun      int    `yaml:"max_per_run"`      // 0 = unlimited, N = max sessions to extract per daemon run
+	Model          string `yaml:"model"`                 // Pass 2 extraction model (default: sonnet)
+	SummarizeModel string `yaml:"summarize_model"`       // Pass 1 summarization model (default: haiku)
+	QualityModel   string `yaml:"quality_model"`         // Pass 2 quality refinement (default: narrative_model)
+	NarrativeModel string `yaml:"narrative_model"`       // narrative generation (default: opus)
+	Mode           string `yaml:"mode"`                  // single (legacy), two-pass (default)
+	ChunkSize      int    `yaml:"chunk_size"`            // tokens per chunk
+	AutoExtract    bool   `yaml:"auto_extract"`          // run after each session?
+	MaxAgeDays     int    `yaml:"max_age_days"`          // 0 = all sessions, N = only last N days
+	MaxPerRun      int    `yaml:"max_per_run"`           // 0 = unlimited, N = max sessions to extract per daemon run
 	MinSessionAgeH int    `yaml:"min_session_age_hours"` // skip sessions younger than N hours (default: 24)
 }
 
 // LLMConfig controls the LLM backend provider.
 type LLMConfig struct {
-	Provider              string  `yaml:"provider"`                  // auto, api/anthropic, openai, openai_compatible, cli
-	ClaudeBinary          string  `yaml:"claude_binary"`             // optional path to claude binary
-	DailyBudgetExtractUSD float64 `yaml:"daily_budget_extract_usd"`  // extraction (Haiku/Sonnet), 0 = unlimited
-	DailyBudgetQualityUSD float64 `yaml:"daily_budget_quality_usd"`  // narratives/persona (Opus), 0 = unlimited
-	MaxBudgetPerCallUSD   float64 `yaml:"max_budget_per_call_usd"`   // per-call safety net (CLI: --max-budget-usd), 0 = no limit
+	Provider              string  `yaml:"provider"`                 // auto, api/anthropic, openai, openai_compatible, cli
+	ClaudeBinary          string  `yaml:"claude_binary"`            // optional path to claude binary
+	DailyBudgetExtractUSD float64 `yaml:"daily_budget_extract_usd"` // extraction (Haiku/Sonnet), 0 = unlimited
+	DailyBudgetQualityUSD float64 `yaml:"daily_budget_quality_usd"` // narratives/persona (Opus), 0 = unlimited
+	MaxBudgetPerCallUSD   float64 `yaml:"max_budget_per_call_usd"`  // per-call safety net (CLI: --max-budget-usd), 0 = no limit
 }
 
 // EvolutionConfig controls knowledge evolution behavior.
@@ -150,8 +172,8 @@ type BriefingConfig struct {
 	DedupThreshold    float64  `yaml:"dedup_threshold"`
 	MaxPerCategory    int      `yaml:"max_per_category"`
 	Languages         []string `yaml:"languages"`
-	RemindOpenWork    bool     `yaml:"remind_open_work"`  // inject instruction to mention open work at session start (default: true)
-	UserProfile       bool     `yaml:"user_profile"`      // include synthesized user profile in briefing (default: true)
+	RemindOpenWork    bool     `yaml:"remind_open_work"` // inject instruction to mention open work at session start (default: true)
+	UserProfile       bool     `yaml:"user_profile"`     // include synthesized user profile in briefing (default: true)
 }
 
 // APIConfig holds API credentials.
@@ -221,22 +243,33 @@ func Default() *Config {
 		},
 		Embedding: embedding.DefaultEmbeddingConfig(),
 		Proxy: ProxyConfig{
-			Enabled:               true,
-			Listen:                ":9099",
-			Target:                "https://api.anthropic.com",
-			OpenAITarget:          "https://api.openai.com",
-			TokenThreshold:        250000,
-			TokenMinimumThreshold: 100000,
-			KeepRecent:            10,
-			SawtoothEnabled:       true,
-			CacheTTL:              "ephemeral",
-			UsageDeflationFactor:  0.7, // experimental: report 70% of actual tokens to CC
-			PromptUngate:          true, // strip CLAUDE.md disclaimer by default (proven safe)
-			SkillEvalInject:       "silent",
-			CacheKeepaliveEnabled: true,
-			CacheKeepaliveMode:    "5m",
-			CacheKeepalivePings5m: 5,
-			CacheKeepalivePings1h: 1,
+			Enabled:                  true,
+			Listen:                   ":9099",
+			Target:                   "https://api.anthropic.com",
+			OpenAITarget:             "https://api.openai.com",
+			TokenThreshold:           250000,
+			TokenMinimumThreshold:    100000,
+			KeepRecent:               10,
+			SawtoothEnabled:          true,
+			CacheTTL:                 "ephemeral",
+			UsageDeflationFactor:     0.7, // experimental: report 70% of actual tokens to CC
+			PromptUngate:             true,
+			PromptToolPrefs:          true,
+			PromptOutputDiscipline:   true,
+			PromptCodingDiscipline:   true,
+			PromptBeweislast:         true,
+			PromptScopeDiscipline:    true,
+			PromptDelegationContract: true,
+			PromptClarifyFirst:       true,
+			PromptCodeToolsFirst:     true,
+			PromptPatternSuggest:     true,
+			SkillEvalInject:          "silent",
+			CacheKeepaliveEnabled:    true,
+			CacheKeepaliveMode:       "5m",
+			CacheKeepalivePings5m:    5,
+			CacheKeepalivePings1h:    1,
+			CodeNavMode:              "block",
+			CodeNavDismissCount:      5,
 			TokenThresholds: map[string]int{
 				"opus":   180000,
 				"sonnet": 180000,
@@ -438,12 +471,12 @@ func (c *Config) ResolvedOpenAIBaseURL() string {
 // DefaultPricing returns hardcoded per-million-token pricing as fallback defaults.
 func DefaultPricing() map[string]ModelPricing {
 	return map[string]ModelPricing{
-		"haiku":     {Input: 1.0, Output: 5.0},
-		"sonnet":    {Input: 3.0, Output: 15.0},
-		"opus":      {Input: 5.0, Output: 25.0},
+		"haiku":      {Input: 1.0, Output: 5.0},
+		"sonnet":     {Input: 3.0, Output: 15.0},
+		"opus":       {Input: 5.0, Output: 25.0},
 		"gpt-5-mini": {Input: 0.25, Output: 2.0},
-		"gpt-5.2":   {Input: 1.75, Output: 14.0},
-		"gpt-5.4":   {Input: 2.5, Output: 15.0},
+		"gpt-5.2":    {Input: 1.75, Output: 14.0},
+		"gpt-5.4":    {Input: 2.5, Output: 15.0},
 	}
 }
 

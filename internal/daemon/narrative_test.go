@@ -88,11 +88,11 @@ func TestBuildNarrativeUserMessage(t *testing.T) {
 		"assistant: I'll look into the timeout issue.",
 		"user: Great, also check the retry logic",
 	}
-	msg := BuildNarrativeUserMessage(messages, "ccm19")
+	msg := BuildNarrativeUserMessage(messages, "myproject")
 	if msg == "" {
 		t.Error("user message should not be empty")
 	}
-	if !strings.Contains(msg, "ccm19") {
+	if !strings.Contains(msg, "myproject") {
 		t.Error("should contain project name")
 	}
 	if !strings.Contains(msg, "cookie scanner") {

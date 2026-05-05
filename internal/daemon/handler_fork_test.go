@@ -58,6 +58,36 @@ func TestHandleForkExtractLearnings(t *testing.T) {
 	}
 }
 
+func TestHandleForkExtractLearnings_PreservesTaskType(t *testing.T) {
+	h, s := mustHandler(t)
+
+	learnings := []map[string]any{
+		{"content": "Cap: Telegram polling; yesmem telegram poll", "category": "unfinished", "task_type": "cap_idea"},
+	}
+	learningsJSON, _ := json.Marshal(learnings)
+
+	resp := h.Handle(Request{
+		Method: "fork_extract_learnings",
+		Params: map[string]any{
+			"learnings": string(learningsJSON),
+		},
+	})
+	if resp.Error != "" {
+		t.Fatalf("unexpected error: %s", resp.Error)
+	}
+
+	all, err := s.GetActiveLearnings("unfinished", "", "", "")
+	if err != nil {
+		t.Fatalf("get learnings: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("expected 1 unfinished learning, got %d", len(all))
+	}
+	if all[0].TaskType != "cap_idea" {
+		t.Fatalf("task_type = %q, want cap_idea", all[0].TaskType)
+	}
+}
+
 func TestHandleForkExtractLearnings_SkipsEmpty(t *testing.T) {
 	h, _ := mustHandler(t)
 

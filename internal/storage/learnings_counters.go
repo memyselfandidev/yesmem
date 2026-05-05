@@ -286,3 +286,24 @@ func (s *Store) EnrichSessionFixationScores(learnings []models.Learning) {
 		}
 	}
 }
+
+// CountAutoCorrectGenerations returns the number of auto-correct outcomes
+// for capName since the cutoff. An "outcome" is either an applied cap
+// (Source='auto_correct_accepted', TriggerRule='cap:NAME') from the
+// minimal-diff path, or a staged proposal (Source='auto_correct_proposal',
+// TriggerRule='cap_proposed:NAME') from the substantial-diff path. Both
+// indicate that an auto-correct attempt fired and produced a persisted
+// row, so both count toward the per-cap generation budget.
+func (s *Store) CountAutoCorrectGenerations(capName string, since time.Time) (int, error) {
+	var count int
+	err := s.readerDB().QueryRow(
+		`SELECT COUNT(*) FROM learnings
+		 WHERE source IN ('auto_correct_accepted', 'auto_correct_proposal')
+		   AND trigger_rule IN (?, ?)
+		   AND created_at >= ?`,
+		"cap:"+capName,
+		"cap_proposed:"+capName,
+		fmtTime(since),
+	).Scan(&count)
+	return count, err
+}

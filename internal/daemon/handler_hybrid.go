@@ -926,6 +926,7 @@ func (h *Handler) enrichRankedResults(results []embedding.RankedResult) []map[st
 	agentTypes := map[string]string{}
 	parentSessionIDs := map[string]string{}
 	sourceAgents := map[string]string{}
+	originTools := map[string]string{}
 	if h.store != nil && len(ids) > 0 {
 		placeholders := make([]string, len(ids))
 		args := make([]any, len(ids))
@@ -939,20 +940,22 @@ func (h *Handler) enrichRankedResults(results []embedding.RankedResult) []map[st
 				COALESCE(l.category, ''),
 				COALESCE(s.agent_type, ''),
 				COALESCE(s.parent_session_id, ''),
-				COALESCE(s.source_agent, 'claude')
+				COALESCE(s.source_agent, 'claude'),
+				COALESCE(l.origin_tool, '')
 			FROM learnings l
 			LEFT JOIN sessions s ON s.id = l.session_id
 			WHERE l.id IN (`+strings.Join(placeholders, ",")+`)`, args...)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
-				var id, src, cat, agentType, parentSessionID, sourceAgent string
-				if rows.Scan(&id, &src, &cat, &agentType, &parentSessionID, &sourceAgent) == nil {
+				var id, src, cat, agentType, parentSessionID, sourceAgent, originTool string
+				if rows.Scan(&id, &src, &cat, &agentType, &parentSessionID, &sourceAgent, &originTool) == nil {
 					sources[id] = src
 					categories[id] = cat
 					agentTypes[id] = agentType
 					parentSessionIDs[id] = parentSessionID
 					sourceAgents[id] = sourceAgent
+					originTools[id] = originTool
 				}
 			}
 		}
@@ -984,6 +987,9 @@ func (h *Handler) enrichRankedResults(results []embedding.RankedResult) []map[st
 		}
 		if role, ok := roles[r.ID]; ok && role != "" {
 			m["agent_role"] = role
+		}
+		if origTool, ok := originTools[r.ID]; ok && origTool != "" {
+			m["origin_tool"] = origTool
 		}
 		out[i] = m
 	}

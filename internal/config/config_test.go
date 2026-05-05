@@ -360,9 +360,9 @@ func TestDefaultConfigHasUpdateSection(t *testing.T) {
 func TestPricingForModelDefaults(t *testing.T) {
 	cfg := Default()
 	tests := []struct {
-		model         string
-		wantInput     float64
-		wantOutput    float64
+		model      string
+		wantInput  float64
+		wantOutput float64
 	}{
 		{"claude-haiku-4-5-20251001", 1.0, 5.0},
 		{"claude-sonnet-4-6", 3.0, 15.0},
@@ -460,5 +460,111 @@ func TestPricingForModelEmptyConfig(t *testing.T) {
 	in, out := cfg.PricingForModel("claude-sonnet-4-6")
 	if in != 3.0 || out != 15.0 {
 		t.Errorf("nil pricing sonnet = (%v, %v), want (3.0, 15.0)", in, out)
+	}
+}
+
+func TestSecretsSanitization_DefaultDisabled(t *testing.T) {
+	cfg := Default()
+	if cfg.SecretsSanitization.Enabled {
+		t.Fatalf("expected SecretsSanitization disabled by default")
+	}
+}
+
+func TestSecretsSanitization_AllowedExceptionsEmpty(t *testing.T) {
+	cfg := Default()
+	if len(cfg.SecretsSanitization.AllowedExceptions) != 0 {
+		t.Fatalf("expected no allowed exceptions by default")
+	}
+}
+
+func TestSecretsSanitization_FromYAML(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.yaml")
+	yaml := []byte("secrets_sanitization:\n  enabled: true\n  allowed_exceptions:\n    - carsten@example.com\n    - support@example.com\n")
+	if err := os.WriteFile(cfgFile, yaml, 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(cfgFile)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.SecretsSanitization.Enabled {
+		t.Errorf("expected Enabled=true, got false")
+	}
+	if got := len(cfg.SecretsSanitization.AllowedExceptions); got != 2 {
+		t.Fatalf("expected 2 allowed exceptions, got %d", got)
+	}
+	if cfg.SecretsSanitization.AllowedExceptions[0] != "carsten@example.com" {
+		t.Errorf("expected carsten@example.com first, got %q", cfg.SecretsSanitization.AllowedExceptions[0])
+	}
+	if cfg.SecretsSanitization.AllowedExceptions[1] != "support@example.com" {
+		t.Errorf("expected support@example.com second, got %q", cfg.SecretsSanitization.AllowedExceptions[1])
+	}
+}
+
+func TestDefault_ProxyDirectiveFlags_DefaultTrue(t *testing.T) {
+	cfg := Default()
+	if !cfg.Proxy.PromptToolPrefs {
+		t.Error("PromptToolPrefs should default to true")
+	}
+	if !cfg.Proxy.PromptOutputDiscipline {
+		t.Error("PromptOutputDiscipline should default to true")
+	}
+	if !cfg.Proxy.PromptCodingDiscipline {
+		t.Error("PromptCodingDiscipline should default to true")
+	}
+	if !cfg.Proxy.PromptBeweislast {
+		t.Error("PromptBeweislast should default to true")
+	}
+	if !cfg.Proxy.PromptScopeDiscipline {
+		t.Error("PromptScopeDiscipline should default to true")
+	}
+	if !cfg.Proxy.PromptDelegationContract {
+		t.Error("PromptDelegationContract should default to true")
+	}
+	if !cfg.Proxy.PromptClarifyFirst {
+		t.Error("PromptClarifyFirst should default to true")
+	}
+}
+
+func TestDefault_ProxyDirectiveFlags_YAMLOverride(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfgFile, []byte(`
+proxy:
+  prompt_tool_prefs: false
+  prompt_output_discipline: false
+  prompt_coding_discipline: false
+  prompt_beweislast: false
+  prompt_scope_discipline: false
+  prompt_delegation_contract: false
+  prompt_clarify_first: false
+`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := Load(cfgFile)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Proxy.PromptToolPrefs {
+		t.Error("PromptToolPrefs should be overridable to false via YAML")
+	}
+	if cfg.Proxy.PromptOutputDiscipline {
+		t.Error("PromptOutputDiscipline should be overridable to false via YAML")
+	}
+	if cfg.Proxy.PromptCodingDiscipline {
+		t.Error("PromptCodingDiscipline should be overridable to false via YAML")
+	}
+	if cfg.Proxy.PromptBeweislast {
+		t.Error("PromptBeweislast should be overridable to false via YAML")
+	}
+	if cfg.Proxy.PromptScopeDiscipline {
+		t.Error("PromptScopeDiscipline should be overridable to false via YAML")
+	}
+	if cfg.Proxy.PromptDelegationContract {
+		t.Error("PromptDelegationContract should be overridable to false via YAML")
+	}
+	if cfg.Proxy.PromptClarifyFirst {
+		t.Error("PromptClarifyFirst should be overridable to false via YAML")
 	}
 }

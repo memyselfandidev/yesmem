@@ -12,9 +12,11 @@ func (h *Handler) handleSearch(params map[string]any) Response {
 	query, _ := params["query"].(string)
 	project, _ := params["project"].(string)
 	excludeSession, _ := params["exclude_session"].(string)
+	since, _ := params["since"].(string)
+	before, _ := params["before"].(string)
 	limit := intOr(params, "limit", 10)
 
-	hits, err := h.store.SearchMessages(query, limit*3) // over-fetch for project filter
+	hits, err := h.store.SearchMessagesCtx(query, since, before, limit*3) // over-fetch for project filter
 	if err != nil {
 		return errorResponse(err.Error())
 	}
@@ -93,13 +95,15 @@ func (h *Handler) handleDeepSearch(params map[string]any) Response {
 	query, _ := params["query"].(string)
 	project, _ := params["project"].(string)
 	excludeSession, _ := params["exclude_session"].(string)
+	since, _ := params["since"].(string)
+	before, _ := params["before"].(string)
 	limit := intOr(params, "limit", 5)
 	includeThinking, _ := params["include_thinking"].(bool)
 	includeCommands, _ := params["include_commands"].(bool)
 
 	// FTS5 now indexes thinking blocks (content_blob copied to content),
 	// so we search all types directly — no separate enrichment queries needed
-	hits, err := h.store.SearchMessagesDeep(query, includeThinking, includeCommands, limit*3)
+	hits, err := h.store.SearchMessagesDeepCtx(query, includeThinking, includeCommands, since, before, limit*3)
 	if err != nil {
 		return errorResponse(err.Error())
 	}

@@ -196,3 +196,33 @@ func TestRenderOpenWork_AllFilteredInReminderMode(t *testing.T) {
 		t.Errorf("should return empty when all items filtered, got %q", result)
 	}
 }
+
+func TestRenderOpenWork_CapIdeasSurviveReminderMode(t *testing.T) {
+	s := DefaultStrings()
+	g := &Generator{strings: s}
+	items := []models.Learning{
+		{ID: 42, Content: "Cap: Telegram polling; yesmem telegram poll", TaskType: "cap_idea", MatchCount: 4, Importance: 1},
+		{ID: 43, Content: "Cap: One-off idea; yesmem one", TaskType: "cap_idea", MatchCount: 2, Importance: 5},
+		{ID: 44, Content: "Regular low-priority task", TaskType: "task", MatchCount: 0, Importance: 1},
+	}
+
+	result := g.renderOpenWork(s, items, 5.0, nil)
+	if !strings.Contains(result, "Cap suggestions from recent work") {
+		t.Fatalf("expected cap suggestions block, got %q", result)
+	}
+	if !strings.Contains(result, "Telegram polling") {
+		t.Fatalf("expected cap idea content, got %q", result)
+	}
+	if strings.Contains(result, "One-off idea") {
+		t.Fatalf("expected below-threshold cap idea to be hidden, got %q", result)
+	}
+	if strings.Contains(result, "Regular low-priority task") {
+		t.Fatalf("expected normal low-importance task to stay filtered in reminder mode, got %q", result)
+	}
+	if !strings.Contains(result, "Confirm: `remember(") {
+		t.Fatalf("expected confirm hint, got %q", result)
+	}
+	if !strings.Contains(result, "Dismiss: `resolve_by_text(") {
+		t.Fatalf("expected dismiss hint, got %q", result)
+	}
+}

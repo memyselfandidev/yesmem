@@ -67,6 +67,7 @@ type Learning struct {
 	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
 	ModelUsed       string     `json:"model_used"`
 	Source          string     `json:"source,omitempty"` // user_stated, claude_suggested, agreed_upon, llm_extracted
+	OriginTool      string     `json:"origin_tool,omitempty"` // user, bash_command_input, file_read, web_external, cap_<name>, llm_extracted_session
 	SourceAgent     string     `json:"source_agent,omitempty"`
 	TargetAgent     string     `json:"target_agent,omitempty"`
 	HitCount           int        `json:"hit_count"`
@@ -360,6 +361,7 @@ var validCategories = map[string]bool{
 	"explicit_teaching": true, "gotcha": true, "decision": true,
 	"pattern": true, "preference": true, "unfinished": true,
 	"relationship": true, "strategic": true, "pivot_moment": true,
+	"cap": true,
 }
 
 // IsValidCategory checks if a learning category string is valid.

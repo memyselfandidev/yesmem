@@ -446,6 +446,9 @@ func (h *Handler) handleWhoami(params map[string]any) Response {
 			result["status"]   = agent.Status
 			result["is_agent"] = true
 		}
+		if model, err := h.store.GetProxyState("session_model:" + sessionID); err == nil && model != "" {
+			result["model"] = model
+		}
 	}
 
 	return jsonResponse(result)
