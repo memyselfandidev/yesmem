@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/carsteneu/yesmem/internal/config"
 	"github.com/carsteneu/yesmem/internal/hints"
 	"github.com/carsteneu/yesmem/internal/models"
 	"github.com/carsteneu/yesmem/internal/storage"
@@ -98,6 +100,15 @@ func RunCheck(dataDir string) {
 		}
 		inputStr = bash.Command
 		keywords = extractKeywords(bash.Command)
+	case "REPL":
+		var repl struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal(hook.ToolInput, &repl) != nil || repl.Code == "" {
+			return
+		}
+		inputStr = repl.Code
+		keywords = extractKeywords(repl.Code)
 	case "Edit", "Write":
 		var file FileInput
 		if json.Unmarshal(hook.ToolInput, &file) != nil || file.FilePath == "" {
@@ -168,6 +179,37 @@ func RunCheck(dataDir string) {
 
 	// Derive project name from cwd
 	project := projectFromCWD(hook.CWD)
+
+	// Code-nav detection: block shell navigation of indexed project files
+	if hook.ToolName == "Bash" && inputStr != "" {
+		codeNavMode := "block"
+		cfgPath := filepath.Join(dataDir, "config.yaml")
+		if cfg, err := config.Load(cfgPath); err == nil && cfg.Proxy.CodeNavMode != "" {
+			codeNavMode = cfg.Proxy.CodeNavMode
+		}
+		if codeNavMode != "off" && !store.IsCodeNavDismissed(hook.SessionID, 5) {
+			if reason, block := CheckCodeNav(inputStr, hook.CWD, project, hook.SessionID, store.IsFileInCodeIndex, false); block {
+				blockCodeNav(reason)
+				return
+			}
+		}
+	}
+
+	if hook.ToolName == "REPL" && inputStr != "" {
+		codeNavMode := "block"
+		cfgPath := filepath.Join(dataDir, "config.yaml")
+		if cfg, err := config.Load(cfgPath); err == nil && cfg.Proxy.CodeNavMode != "" {
+			codeNavMode = cfg.Proxy.CodeNavMode
+		}
+		if codeNavMode != "off" && !store.IsCodeNavDismissed(hook.SessionID, 5) {
+			for _, cmd := range ParseREPLNavCommands(inputStr) {
+				if reason, block := CheckCodeNav(cmd, hook.CWD, project, hook.SessionID, store.IsFileInCodeIndex, false); block {
+					blockCodeNav(reason)
+					return
+				}
+			}
+		}
+	}
 
 	// Split matches into project-specific and global buckets
 	// File ops use lower threshold: 1 match with filename (contains ".") suffices
@@ -241,6 +283,16 @@ func RunCheck(dataDir string) {
 	}
 	if len(globalMatches) > maxGlobal {
 		globalMatches = globalMatches[:maxGlobal]
+	}
+
+	// Filter out old info gotchas that are already in the session-start briefing.
+	// Keep: (1) failure-based (FailCount>0), (2) new since session start, (3) file-specific (entity matches input),
+	// (4) bypass if no session data.
+	if hook.SessionID != "" {
+		if sess, err := store.GetSession(hook.SessionID); err == nil && !sess.StartedAt.IsZero() {
+			projectMatches = filterAlreadyBriefedGotchas(projectMatches, sess.StartedAt, inputStr)
+			globalMatches = filterAlreadyBriefedGotchas(globalMatches, sess.StartedAt, "")
+		}
 	}
 
 	if len(projectMatches) == 0 && len(globalMatches) == 0 {
@@ -413,6 +465,53 @@ func blockEdit(filePath string) {
 	jsonOut, _ := json.Marshal(out)
 	fmt.Print(string(jsonOut))
 	os.Exit(2)
+}
+
+// blockCodeNav outputs a JSON response that blocks a shell navigation command
+// when yesmem MCP tools should be used instead.
+func blockCodeNav(reason string) {
+	out := map[string]any{
+		"decision": "block",
+		"reason":   reason,
+		"hookSpecificOutput": map[string]any{
+			"hookEventName":     "PreToolUse",
+			"additionalContext": reason,
+		},
+	}
+	jsonOut, _ := json.Marshal(out)
+	fmt.Print(string(jsonOut))
+	os.Exit(2)
+}
+
+// filterAlreadyBriefedGotchas removes gotchas that are already present in the
+// session-start briefing. Keeps: failure-based gotchas (FailCount>0 — real errors),
+// gotchas created since session start (new discoveries), and file-specific gotchas
+// (entity matches the current input, e.g. file path for Edit/Write). Old info-level
+// gotchas are redundant with the briefing and get skipped.
+func filterAlreadyBriefedGotchas(matches []matchedGotcha, sessionStart time.Time, inputStr string) []matchedGotcha {
+	var filtered []matchedGotcha
+	for _, m := range matches {
+		if m.learning.FailCount > 0 {
+			filtered = append(filtered, m)
+		} else if m.learning.CreatedAt.After(sessionStart) {
+			filtered = append(filtered, m)
+		} else if inputStr != "" && entitiesMatchInput(m.learning.Entities, inputStr) {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered
+}
+
+// entitiesMatchInput returns true if any entity substring-matches the input.
+func entitiesMatchInput(entities []string, input string) bool {
+	inputLower := strings.ToLower(input)
+	for _, e := range entities {
+		el := strings.ToLower(e)
+		if el != "" && (strings.Contains(inputLower, el) || strings.Contains(el, inputLower)) {
+			return true
+		}
+	}
+	return false
 }
 
 // projectFromCWD extracts the project name from a working directory path.

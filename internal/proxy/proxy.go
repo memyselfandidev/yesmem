@@ -24,14 +24,14 @@ import (
 
 // Config holds proxy configuration.
 type Config struct {
-	ListenAddr     string // e.g. ":9099"
-	TargetURL      string // e.g. "https://api.anthropic.com"
+	ListenAddr            string         // e.g. ":9099"
+	TargetURL             string         // e.g. "https://api.anthropic.com"
 	TokenThreshold        int            // trigger stubbing above this estimated token count
 	TokenMinimumThreshold int            // stub down to this floor
 	TokenThresholds       map[string]int // model-specific thresholds: {"opus": 180000, "haiku": 130000}
-	KeepRecent     int    // number of messages to always keep unmodified
-	DataDir        string // yesmem data directory for DB access
-	OpenAITargetURL string // upstream for OpenAI-format clients; if empty, uses TargetURL
+	KeepRecent            int            // number of messages to always keep unmodified
+	DataDir               string         // yesmem data directory for DB access
+	OpenAITargetURL       string         // upstream for OpenAI-format clients; if empty, uses TargetURL
 
 	// Signal reflection
 	SignalsEnabled     bool   // enable async signal reflection calls
@@ -49,11 +49,20 @@ type Config struct {
 	UsageDeflationFactor float64
 
 	// System prompt rewriting
-	PromptUngate  bool   // strip "may or may not be relevant" disclaimer from CLAUDE.md injection
-	PromptRewrite bool   // strip "Output efficiency" + "short and concise", inject Ant-quality directives
-	PromptEnhance bool   // CLAUDE.md authority reinforcement, comment discipline, persona-based tone
-	EffortFloor     string // minimum effort level: "low", "medium", "high", "max" (empty = off)
-	SkillEvalInject string // "true" = verbose eval, "silent" = internal eval only, "false" = disabled
+	PromptUngate             bool   // strip "may or may not be relevant" disclaimer from CLAUDE.md injection
+	PromptRewrite            bool   // strip "Output efficiency" + "short and concise", inject Ant-quality directives
+	PromptEnhance            bool   // CLAUDE.md authority reinforcement, comment discipline, persona-based tone
+	PromptToolPrefs          bool   // inject [yesmem-tool-prefs] Edit/Write preference + error-semantics warning
+	PromptOutputDiscipline   bool   // inject [yesmem-output-discipline] no-preamble + no-skill-eval + exploratory-heuristic
+	PromptCodingDiscipline   bool   // inject [yesmem-coding-discipline] read-before-propose + no-brute-force + no-half-finished
+	PromptBeweislast         bool   // inject [yesmem-beweislast] fabrication-guard + claim-vs-proof + stance-under-challenge + tool-result-honesty + long-context-erosion
+	PromptScopeDiscipline    bool   // inject [yesmem-scope-discipline] deliver-A-not-A+B+C + adjacent-findings-separate + scope-bound-authorization
+	PromptDelegationContract bool   // inject [yesmem-delegation-contract] self-contained-prompts + parallel-dispatch
+	PromptClarifyFirst       bool   // inject [yesmem-clarify-first] clarify only when alternative interpretations produce materially different work
+	PromptCodeToolsFirst     bool   // inject [yesmem-code-tools-first] prefer MCP code-navigation tools over Agent spawns
+	PromptPatternSuggest     bool   // record repeated shell-command shapes for offline cap-suggestion analysis
+	EffortFloor              string // minimum effort level: "low", "medium", "high", "max" (empty = off)
+	SkillEvalInject          string // "true" = verbose eval, "silent" = internal eval only, "false" = disabled
 
 	// Cache keepalive
 	CacheKeepaliveEnabled bool
@@ -116,8 +125,8 @@ type Server struct {
 	tokenizer *tokenizer.Tokenizer
 
 	// Cached overhead tokens (system + tools), set on first request per thread
-	overheadMu       sync.RWMutex
-	overheadTokens   int // unused, kept for interface compat
+	overheadMu     sync.RWMutex
+	overheadTokens int // unused, kept for interface compat
 
 	// Hysteresis state for stubbing (Task #6)
 	stubActive atomic.Bool
@@ -134,13 +143,24 @@ type Server struct {
 	sessionStartTime time.Time
 
 	// Runtime config override (set via MCP set_config tool)
-	configOverrideMu         sync.RWMutex
-	tokenThresholdOverrides  map[string]int // model-key → threshold, "" = global fallback
+	configOverrideMu        sync.RWMutex
+	tokenThresholdOverrides map[string]int // model-key → threshold, "" = global fallback
 
-	// Briefing cache — loaded once per thread, injected as user/assistant message pair
-	briefingMu   sync.RWMutex
-	briefingText string
-	codeMapText  string
+	// Prompt rewrite miss logging: function+Claude Code version → last log time
+	rewriteMissMu  sync.Mutex
+	rewriteMissLog map[string]time.Time
+
+	// Briefing cache — keyed by threadID. Each Claude Code session thread gets
+	// its own briefing+codemap snapshot so a sawtooth refreeze on thread A
+	// cannot invalidate thread B's cached message-prefix hash. The cache entry
+	// remembers which project it was loaded for; switching project for the
+	// same thread evicts the old entry on next read.
+	briefingMu    sync.RWMutex
+	briefingCache map[string]briefingEntry
+
+	// briefingLoader is an optional test-only seam for refreshBriefing.
+	// Nil in production → refreshBriefing falls back to s.loadBriefing.
+	briefingLoader func(project, projectDir string) briefingData
 
 	// Cognitive signal bus — routes _signal_* tool calls to handlers
 	signalBus *SignalBus
@@ -156,14 +176,14 @@ type Server struct {
 	selfPrimes  map[string]string
 
 	// Timestamp tracking: threadID → time of last response completion
-	responseTsMu sync.RWMutex
+	responseTsMu  sync.RWMutex
 	responseTimes map[string]time.Time
 
 	// Think reminder: per-thread request counter (replaces hook-think file-based counter)
 	thinkMu       sync.Mutex
 	thinkCounters map[string]int // threadID → request count
 
-	channelMu         sync.Mutex
+	channelMu          sync.Mutex
 	channelInjectCount map[string]int // sessionID → injection turn count
 
 	// Prompt cache gating — enables cache_control breakpoints when requests are frequent
@@ -171,6 +191,8 @@ type Server struct {
 
 	// Sawtooth cache optimization
 	frozenStubs       *FrozenStubs
+	eagerStubMemory   *EagerStubMemory
+	capsCache         *CapsCache
 	sawtoothTrigger   *SawtoothTrigger
 	timestampStore    *TimestampStore
 	cacheStatusWriter *CacheStatusWriter
@@ -189,15 +211,19 @@ type Server struct {
 	forkConfigs []ForkConfig
 
 	// Rules re-injection: condensed CLAUDE.md rules injected every ~40k tokens
-	rulesMu                sync.RWMutex
-	rulesBlock             string         // cached condensed rules (fetched once from daemon)
-	rulesTokenCount        map[string]int // threadID → tokens since last rules injection
-	rulesCollapseInjected  map[string]bool // threadID → true if collapse already injected rules (reset by normal inject)
-	msgCounters      *msgCounters   // global per-thread msg counter, persists across collapses
+	rulesMu               sync.RWMutex
+	rulesBlock            string          // cached condensed rules (fetched once from daemon)
+	rulesTokenCount       map[string]int  // threadID → tokens since last rules injection
+	rulesCollapseInjected map[string]bool // threadID → true if collapse already injected rules (reset by normal inject)
+	msgCounters           *msgCounters    // global per-thread msg counter, persists across collapses
 
 	// Loop detection: per-thread warning state
 	loopMu     sync.Mutex
 	loopStates map[string]*LoopState // threadID → state
+
+	// Injection overhead: per-thread delta between API-actual and local BPE estimate
+	injectionOverheadMu sync.RWMutex
+	injectionOverhead   map[string]int // threadID → overhead tokens
 }
 
 // Run starts the proxy server and blocks until interrupted.
@@ -214,31 +240,35 @@ func Run(cfg Config) error {
 				ResponseHeaderTimeout: 60 * time.Second,
 			},
 		},
-		logger:          createLogger(cfg.DataDir),
-		annotations:     make(map[string]string),
-		decay:           NewDecayTracker(),
-		narrative:       NewNarrative(),
-		stats:           &ProxyStats{startTime: time.Now()},
-		selfPrimes:        make(map[string]string),
-		lastInjectedIDs:     make(map[string]map[int64]string),
-		sessionInjectCounts: make(map[string]map[int64]int),
-		lastTurnInjected:    make(map[string]map[int64]bool),
-		responseTimes:     make(map[string]time.Time),
-		thinkCounters:      make(map[string]int),
-		channelInjectCount: make(map[string]int),
-		cacheGate:       NewCacheGate(cacheGapForTTL(cfg.CacheTTL)),
-		frozenStubs:       NewFrozenStubsWithTTL(sawtoothTTLForCacheTTL(cfg.CacheTTL)),
-		timestampStore:    NewTimestampStore(),
-		sawtoothTrigger:   NewSawtoothTrigger(cacheGapForTTL(cfg.CacheTTL), cfg.TokenThreshold, cfg.TokenMinimumThreshold),
-		cacheStatusWriter: NewCacheStatusWriter(cfg.DataDir, cfg.CacheTTL, cfg.TokenThreshold, cfg.TokenMinimumThreshold),
-		cacheTTLDetector:  NewCacheTTLDetectorWithPersist(cfg.DataDir),
-		skillTracker:      newSkillHintTracker(),
+		logger:                createLogger(cfg.DataDir),
+		annotations:           make(map[string]string),
+		decay:                 NewDecayTracker(),
+		narrative:             NewNarrative(),
+		stats:                 &ProxyStats{startTime: time.Now()},
+		selfPrimes:            make(map[string]string),
+		lastInjectedIDs:       make(map[string]map[int64]string),
+		sessionInjectCounts:   make(map[string]map[int64]int),
+		lastTurnInjected:      make(map[string]map[int64]bool),
+		responseTimes:         make(map[string]time.Time),
+		thinkCounters:         make(map[string]int),
+		channelInjectCount:    make(map[string]int),
+		rewriteMissLog:        make(map[string]time.Time),
+		cacheGate:             NewCacheGate(cacheGapForTTL(cfg.CacheTTL)),
+		frozenStubs:           NewFrozenStubsWithTTL(sawtoothTTLForCacheTTL(cfg.CacheTTL)),
+		eagerStubMemory:       NewEagerStubMemory(),
+		capsCache:             NewCapsCache(),
+		timestampStore:        NewTimestampStore(),
+		sawtoothTrigger:       NewSawtoothTrigger(cacheGapForTTL(cfg.CacheTTL), cfg.TokenThreshold, cfg.TokenMinimumThreshold),
+		cacheStatusWriter:     NewCacheStatusWriter(cfg.DataDir, cfg.CacheTTL, cfg.TokenThreshold, cfg.TokenMinimumThreshold),
+		cacheTTLDetector:      NewCacheTTLDetectorWithPersist(cfg.DataDir),
+		skillTracker:          newSkillHintTracker(),
 		rulesTokenCount:       make(map[string]int),
 		rulesCollapseInjected: make(map[string]bool),
-		msgCounters:       newMsgCounters(),
-		loopStates:        make(map[string]*LoopState),
-		forkState:   NewForkState(cfg.ForkedAgentsTokenGrowthTrigger, cfg.ForkedAgentsMaxFailures, cfg.ForkedAgentsMaxForksPerSession),
-		forkConfigs: []ForkConfig{},
+		msgCounters:           newMsgCounters(),
+		loopStates:            make(map[string]*LoopState),
+		injectionOverhead:     make(map[string]int),
+		forkState:             NewForkState(cfg.ForkedAgentsTokenGrowthTrigger, cfg.ForkedAgentsMaxFailures, cfg.ForkedAgentsMaxForksPerSession),
+		forkConfigs:           []ForkConfig{},
 	}
 
 	// Log persisted detection state
@@ -313,6 +343,27 @@ func Run(cfg Config) error {
 		}
 	})
 	s.frozenStubs.SetLoadFunc(func(key string) (string, bool) {
+		result, err := s.queryDaemon("get_proxy_state", map[string]any{"key": key})
+		if err != nil || result == nil {
+			return "", false
+		}
+		var resp struct {
+			Value string `json:"value"`
+		}
+		if json.Unmarshal(result, &resp) != nil || resp.Value == "" {
+			return "", false
+		}
+		return resp.Value, true
+	})
+
+	// Wire eager-stub memory persistence via same daemon RPC.
+	// Persists per-thread tool_use_id sets so stub decisions survive deploys.
+	s.eagerStubMemory.SetPersistFunc(func(key, value string) {
+		if _, err := s.queryDaemon("set_proxy_state", map[string]any{"key": key, "value": value}); err != nil {
+			s.logger.Printf("[eagerstub] persist failed for %s: %v", key, err)
+		}
+	})
+	s.eagerStubMemory.SetLoadFunc(func(key string) (string, bool) {
 		result, err := s.queryDaemon("get_proxy_state", map[string]any{"key": key})
 		if err != nil || result == nil {
 			return "", false
@@ -687,6 +738,17 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	proj := extractProjectName(req)
 	model, _ := req["model"].(string)
 
+	// Persist current model under session-keyed proxy_state so handleWhoami
+	// can return it. Best-effort: failure is non-fatal (log only).
+	if threadID != "" && model != "" {
+		if _, err := s.queryDaemon("set_proxy_state", map[string]any{
+			"key":   "session_model:" + threadID,
+			"value": model,
+		}); err != nil {
+			s.logger.Printf("[whoami-model] persist failed for %s: %v", threadID, err)
+		}
+	}
+
 	// Refresh runtime config overrides from daemon (per-session or global)
 	s.refreshConfigOverrides(threadID)
 
@@ -736,14 +798,18 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	// prompt_rewrite: strip output-throttling directives, rewrite quality caps, inject Ant-quality directives
 	if s.cfg.PromptRewrite {
-		// StripOutputEfficiency: disabled — Anthropic replaced # Output efficiency with # Text output (CC ~2.1.117)
-		// if StripOutputEfficiency(req) {
-		// 	s.logger.Printf("[req %d] REWRITE: stripped Output efficiency section", reqIdx)
-		// 	needsReserialization = true
-		// }
+		userAgent := r.Header.Get("User-Agent")
+		if StripOutputEfficiency(req) {
+			s.logger.Printf("[req %d] REWRITE: stripped Output efficiency section", reqIdx)
+			needsReserialization = true
+		} else {
+			s.logRewriteMiss("StripOutputEfficiency", userAgent)
+		}
 		if StripToneBrevity(req) {
 			s.logger.Printf("[req %d] REWRITE: stripped 'short and concise' from Tone", reqIdx)
 			needsReserialization = true
+		} else {
+			s.logRewriteMiss("StripToneBrevity", userAgent)
 		}
 		if RewriteGoldPlating(req) {
 			s.logger.Printf("[req %d] REWRITE: rewritten gold-plating directive", reqIdx)
@@ -793,6 +859,58 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Printf("[req %d] ENHANCE: injected authority + persona tone", reqIdx)
 		needsReserialization = true
+	}
+
+	// yesmem directive blocks: restore guidance Anthropic dropped 2026-03→04.
+	// Each gated independently so users can disable one without losing the others.
+	if s.cfg.PromptToolPrefs || s.cfg.PromptOutputDiscipline || s.cfg.PromptCodingDiscipline ||
+		s.cfg.PromptBeweislast || s.cfg.PromptScopeDiscipline || s.cfg.PromptDelegationContract ||
+		s.cfg.PromptClarifyFirst {
+		if s.cfg.PromptToolPrefs {
+			InjectToolPrefs(req)
+		}
+		if s.cfg.PromptOutputDiscipline {
+			InjectOutputDiscipline(req)
+		}
+		if s.cfg.PromptCodingDiscipline {
+			InjectCodingDiscipline(req)
+		}
+		if s.cfg.PromptBeweislast {
+			InjectBeweislast(req)
+		}
+		if s.cfg.PromptScopeDiscipline {
+			InjectScopeDiscipline(req)
+		}
+		if s.cfg.PromptDelegationContract {
+			InjectDelegationContract(req)
+		}
+		if s.cfg.PromptClarifyFirst {
+			InjectClarifyFirst(req)
+		}
+		if s.cfg.PromptCodeToolsFirst {
+			InjectCodeToolsFirst(req)
+		}
+		needsReserialization = true
+		s.logger.Printf("[req %d] DIRECTIVES: injected yesmem-* discipline blocks", reqIdx)
+	}
+
+	if s.cfg.PromptPatternSuggest && proj != "" {
+		patternMsgs, _ := req["messages"].([]any)
+		detectReplPatternSuggestion(patternMsgs, proj, s.queryDaemon)
+	}
+
+	// Turn-sequence recording: hash tool types from previous assistant turn, send to daemon
+	if s.cfg.PromptPatternSuggest && proj != "" && threadID != "" {
+		if msgs, ok := req["messages"].([]any); ok {
+			if turnHash, toolNames := computeTurnHashFromMessages(msgs); turnHash != "" {
+				go s.queryDaemon("record_turn_sequence", map[string]any{
+					"thread_id":     threadID,
+					"project":       proj,
+					"turn_hash":     turnHash,
+					"example_tools": toolNames,
+				})
+			}
+		}
 	}
 
 	// thinking normalization: convert thinking.type "enabled" → "adaptive" for models that require it
@@ -984,12 +1102,11 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			freshTokens := s.countMessageTokens(freshMessages)
 			combinedTokens := frozen.Tokens + freshTokens + overhead
 
-			if combinedTokens > s.effectiveTokenThreshold(model) ||
-				s.sawtoothTrigger.GetLastTokens(threadID) > s.effectiveTokenThreshold(model) {
+			if shouldInvalidateFrozen(totalTokens, s.effectiveTokenThreshold(model)) {
 				// Fresh tail grew too large — invalidate and re-stub
-				s.logger.Printf("[req %d %s tid=%s] SAWTOOTH: frozen prefix expired (%dk frozen + %dk fresh + %dk overhead = %dk > %dk threshold)",
-					reqIdx, proj, threadID, frozen.Tokens/1000, freshTokens/1000, overhead/1000, combinedTokens/1000, s.effectiveTokenThreshold(model)/1000)
-				s.frozenStubs.Invalidate(threadID)
+				s.logger.Printf("[req %d %s tid=%s] SAWTOOTH: frozen prefix expired (totalTokens=%dk > %dk threshold, combined=%dk: %dk frozen + %dk fresh + %dk overhead)",
+					reqIdx, proj, threadID, totalTokens/1000, s.effectiveTokenThreshold(model)/1000, combinedTokens/1000, frozen.Tokens/1000, freshTokens/1000, overhead/1000)
+				s.invalidateThreadCaches(threadID, proj, extractWorkingDirectory(req))
 				frozen = nil // fall through to trigger check below
 			} else {
 				// Use frozen prefix + fresh tail
@@ -998,10 +1115,11 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 				combined = append(combined, freshMessages...)
 				// Eager-stub large tool_results in fresh tail (model already processed them)
 				beforeEager := s.countMessageTokens(combined[len(frozen.Messages):])
-				combined = EagerStubToolResults(combined, len(frozen.Messages), s.countTokens)
+				var stubSticky, stubFresh int
+				combined = EagerStubToolResults(combined, len(frozen.Messages), s.countTokens, WithStubMemory(s.eagerStubMemory, threadID), WithStubCounters(&stubSticky, &stubFresh))
 				afterEager := s.countMessageTokens(combined[len(frozen.Messages):])
 				if beforeEager != afterEager {
-					s.logger.Printf("[req %d %s tid=%s] EAGER-STUB: fresh %dk → %dk (saved %dk)", reqIdx, proj, threadID, beforeEager/1000, afterEager/1000, (beforeEager-afterEager)/1000)
+					s.logger.Printf("[req %d %s tid=%s] EAGER-STUB: fresh %dk → %dk (saved %dk) [sticky=%d fresh=%d]", reqIdx, proj, threadID, beforeEager/1000, afterEager/1000, (beforeEager-afterEager)/1000, stubSticky, stubFresh)
 				}
 				req["messages"] = combined
 				needsReserialization = true
@@ -1052,23 +1170,28 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 						boundaryMsg = messages[cutoff-1]
 					}
 					frozenTokens := s.countMessageTokens(finalMessages)
-					s.frozenStubs.Store(threadID, finalMessages, cutoff, boundaryMsg, frozenTokens, totalTokens)
+					frozenCount, stripped, breakpointInjected := s.freezeStubsAndInjectBreakpoint(req, threadID, cutoff, boundaryMsg, frozenTokens, totalTokens)
 					s.decay.Persist(threadID)
+					if stripped > 0 {
+						s.logger.Printf("[req %d %s tid=%s] SAWTOOTH: stripped %d embedded breakpoints before freeze",
+							reqIdx, proj, threadID, stripped)
+					}
 					s.logger.Printf("[req %d %s tid=%s] SAWTOOTH: frozen %d messages at cutoff=%d (~%dk tokens)",
-						reqIdx, proj, threadID, len(finalMessages), cutoff, frozenTokens/1000)
-					if InjectFrozenStubCacheBreakpoint(req, len(finalMessages)) {
+						reqIdx, proj, threadID, frozenCount, cutoff, frozenTokens/1000)
+					if breakpointInjected {
 						s.logger.Printf("[req %d %s tid=%s] SAWTOOTH: frozen stub cache breakpoint at messages[%d]",
-							reqIdx, proj, threadID, len(finalMessages)-1)
+							reqIdx, proj, threadID, frozenCount-1)
 					}
 				}
 				needsReserialization = true
 			} else {
 				// No trigger, no frozen stubs — eager-stub to delay first collapse
 				beforeEager := s.countMessageTokens(messages)
-				messages = EagerStubToolResults(messages, 0, s.countTokens)
+				var stubSticky, stubFresh int
+				messages = EagerStubToolResults(messages, 0, s.countTokens, WithStubMemory(s.eagerStubMemory, threadID), WithStubCounters(&stubSticky, &stubFresh))
 				afterEager := s.countMessageTokens(messages)
 				if beforeEager != afterEager {
-					s.logger.Printf("[req %d %s tid=%s] EAGER-STUB: %dk → %dk (saved %dk)", reqIdx, proj, threadID, beforeEager/1000, afterEager/1000, (beforeEager-afterEager)/1000)
+					s.logger.Printf("[req %d %s tid=%s] EAGER-STUB: %dk → %dk (saved %dk) [sticky=%d fresh=%d]", reqIdx, proj, threadID, beforeEager/1000, afterEager/1000, (beforeEager-afterEager)/1000, stubSticky, stubFresh)
 					req["messages"] = messages
 					needsReserialization = true
 				}
@@ -1268,9 +1391,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if threadID != "" {
 		currentIDs := make(map[int64]string) // id → source
 		// Source 1: Briefing learnings (cached, same every turn)
-		s.briefingMu.RLock()
-		briefingSnapshot := s.briefingText
-		s.briefingMu.RUnlock()
+		briefingSnapshot, _, _ := s.getCachedBriefing(threadID, proj)
 		if briefingSnapshot != "" {
 			for _, m := range idPattern.FindAllStringSubmatch(briefingSnapshot, -1) {
 				if id, err := strconv.ParseInt(m[1], 10, 64); err == nil {
@@ -1322,6 +1443,22 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Refresh frozen-prefix snapshot with the post-timestamps bytes that
+		// will appear in the wire body for the frozen range. This MUST run
+		// BEFORE injectBriefingTurn / injectCodeMapTurn / injectCapabilitiesTurn:
+		// those stages prepend or insert turns into req["messages"], which
+		// shifts the frozen range to a higher offset. Slicing
+		// req["messages"][:frozenLen] AFTER inject would capture the injected
+		// turns at the head and corrupt the stored frozen prefix, breaking
+		// cache continuity for 5-9 turns after every emergency-sawtooth.
+		if frozenLen := s.frozenStubs.LengthFor(threadID); frozenLen > 0 {
+			if msgs, ok := req["messages"].([]any); ok && len(msgs) >= frozenLen {
+				if s.frozenStubs.UpdateMessages(threadID, msgs[:frozenLen]) {
+					s.logger.Printf("[req %d %s tid=%s] FROZEN-SNAPSHOT: refreshed %d pre-inject messages", reqIdx, proj, threadID, frozenLen)
+				}
+			}
+		}
+
 		// Briefing injection: prepend user/assistant turn pair at beginning of messages.
 		// Static per session → stable prefix → cacheable. Must be before dialog injection.
 		if s.injectBriefingTurn(req, reqIdx, proj, threadID) {
@@ -1330,6 +1467,17 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 		// Code Map injection: insert after briefing turn pair.
 		if s.injectCodeMapTurn(req, reqIdx, proj, threadID) {
+			needsReserialization = true
+		}
+
+		// Active capabilities injection: insert user/assistant pair directly
+		// before the last user message. Fresh per turn (no cache) so
+		// activate/deactivate takes effect immediately. Must run AFTER
+		// briefing/codeMap (both prepend at beginning) and BEFORE dialog
+		// injection (which appends at end) to preserve cache for the
+		// briefing prefix and keep the injection close to the real user
+		// turn.
+		if s.injectCapabilitiesTurn(req, threadID) {
 			needsReserialization = true
 		}
 

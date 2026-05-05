@@ -1,6 +1,6 @@
 ---
 name: yesmem-planning
-description: Use when starting ANY multi-step implementation work, when a plan file is read or exists, when completing a step and needing to track progress, or when prompted by [Plan Checkpoint]. Activate plans via set_plan() so progress checkpoints fire automatically.
+description: Use when starting iterative work that needs to survive context-collapse, like work spanning more than 5 tool cycles, exploring more than 1 hypothesis, touching multiple files or worktrees, debug spirals, side-quests parallel to a main thread, or when prompted by [Plan Checkpoint]. Plans are thread-scoped (parallel sessions don't conflict) and re-injected on every turn. They are the only context-loss-proof anchor for the active task. Activate via set_plan(), update via update_plan() at each pivot.
 ---
 
 # Plan Management

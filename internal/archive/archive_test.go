@@ -20,14 +20,14 @@ func TestArchiveFile(t *testing.T) {
 
 	a := New(archiveDir)
 
-	// Archive it under project "ccm19"
-	err := a.ArchiveFile(srcFile, "ccm19")
+	// Archive it under project "myproject"
+	err := a.ArchiveFile(srcFile, "myproject")
 	if err != nil {
 		t.Fatalf("archive: %v", err)
 	}
 
 	// Verify archived file exists
-	archived := filepath.Join(archiveDir, "ccm19", "test-session.jsonl")
+	archived := filepath.Join(archiveDir, "myproject", "test-session.jsonl")
 	data, err := os.ReadFile(archived)
 	if err != nil {
 		t.Fatalf("read archived: %v", err)

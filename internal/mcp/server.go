@@ -789,6 +789,7 @@ func (s *Server) registerTools() {
 			mcplib.WithString("project", mcplib.Description("Project filter")),
 			mcplib.WithString("model", mcplib.Description("Caller model")),
 			mcplib.WithString("source", mcplib.Description("user_stated|agreed_upon|claude_suggested")),
+			mcplib.WithString("origin", mcplib.Description("Origin tool tag for provenance-aware trust scoring (e.g. manual, repl_command, llm_extracted_session)")),
 			mcplib.WithNumber("supersedes", mcplib.Description("ID of learning this replaces")),
 			mcplib.WithArray("entities", mcplib.WithStringItems(), mcplib.Description("Files, systems, people affected")),
 			mcplib.WithArray("actions", mcplib.WithStringItems(), mcplib.Description("Commands or operations involved")),
@@ -888,6 +889,78 @@ func (s *Server) registerTools() {
 		), s.proxyCallFormat("get_learnings", formatLearnings))
 
 	s.srv.AddTool(
+		mcplib.NewTool("get_caps",
+			mcplib.WithDescription("Load saved cap definitions. Capabilities are reusable, tested tool definitions that persist across sessions."),
+			mcplib.WithString("project", mcplib.Description("Project filter")),
+			mcplib.WithString("name", mcplib.Description("Get specific cap by name")),
+			mcplib.WithString("tag", mcplib.Description("Filter by tag")),
+			mcplib.WithNumber("limit", mcplib.Description("Max results")),
+		), s.proxyCallFormat("get_caps", formatSimpleMessage))
+
+	s.srv.AddTool(
+		mcplib.NewTool("save_cap",
+			mcplib.WithDescription("Save an executable cap (tool definition). Auto-supersedes existing caps with the same name."),
+			mcplib.WithString("name", mcplib.Required(), mcplib.Description("Capability name (e.g. 'reddit_fetch')")),
+			mcplib.WithString("description", mcplib.Description("What the cap does")),
+			mcplib.WithString("scripts", mcplib.Required(), mcplib.Description("JSON array of script objects (Cap-Spec v1.1). Each: {name, kind: 'tool'|'handler', runtime: 'repl'|'bash', body, schema?}. At least one kind='tool' script required.")),
+			mcplib.WithString("tags", mcplib.Description("Comma-separated tags (e.g. 'web,reddit,fetch')")),
+			mcplib.WithString("project", mcplib.Description("Project scope (omit for global)")),
+			mcplib.WithBoolean("tested", mcplib.Description("Whether the handler has been verified working")),
+			mcplib.WithString("test_date", mcplib.Description("ISO date when last tested")),
+			mcplib.WithBoolean("auto_active", mcplib.Description("When true, this cap is activated automatically for every new Claude-Code thread — no explicit activate_cap() call needed. Use for caps that should be universally available (e.g. reddit_fetch, git_log_oneline).")),
+			mcplib.WithString("actions", mcplib.Description("JSON object mapping action names to instruction text (e.g. {\"setup\": \"Ask for bot token...\", \"teardown\": \"Remove jobs...\"})")),
+		), s.proxyCallFormat("save_cap", formatSimpleMessage))
+
+	s.srv.AddTool(
+		mcplib.NewTool("cap_proposal_decide",
+			mcplib.WithDescription("Accept or reject an auto-correct cap proposal. The proposal must be in category='cap_proposed'. On accept, the proposed bash body is applied to the active cap via save_cap with source='auto_correct_accepted'. On reject, the proposal transitions to 'cap_proposed_rejected' and the active cap is left untouched."),
+			mcplib.WithNumber("id", mcplib.Required(), mcplib.Description("learnings.id of the cap_proposed row")),
+			mcplib.WithString("decision", mcplib.Required(), mcplib.Description("'accept' or 'reject'")),
+			mcplib.WithString("notes", mcplib.Description("Optional reviewer note appended to the proposal content")),
+		), s.proxyCallFormat("cap_proposal_decide", formatSimpleMessage))
+
+	s.srv.AddTool(
+		mcplib.NewTool("list_cap_proposals",
+			mcplib.WithDescription("List cap-correction proposals. Defaults to status='cap_proposed' (pending review). Pass 'cap_proposed_accepted', 'cap_proposed_rejected', or 'all' to see history."),
+			mcplib.WithString("status", mcplib.Description("'cap_proposed' (default), 'cap_proposed_accepted', 'cap_proposed_rejected', or 'all'")),
+			mcplib.WithString("project", mcplib.Description("Filter by project (omit for all projects)")),
+			mcplib.WithNumber("limit", mcplib.Description("Max rows per status (default 100)")),
+		), s.proxyCallFormat("list_cap_proposals", formatSimpleMessage))
+
+	s.srv.AddTool(
+		mcplib.NewTool("register_caps",
+			mcplib.WithDescription("Generate JavaScript registerTool() code for saved caps. Execute the returned code in the REPL to make caps available as native tools."),
+			mcplib.WithString("project", mcplib.Description("Filter by project (omit for all)")),
+			mcplib.WithString("tag", mcplib.Description("Filter by tag")),
+		), s.proxyCallFormat("register_caps", formatSimpleMessage))
+
+	s.srv.AddTool(
+		mcplib.NewTool("activate_cap",
+			mcplib.WithDescription("Activate a saved cap for the current thread (thread_id is auto-injected from the current Claude session). Returns registerTool() JS to paste into the REPL. Capability re-injection on subsequent turns is automatic. NOTE: call this as a native MCP tool — do NOT invoke it from the REPL (Claude Code's REPL VM binds only a subset of MCP tools as JS globals)."),
+			mcplib.WithString("name", mcplib.Required(), mcplib.Description("Capability name")),
+			mcplib.WithString("project", mcplib.Description("Project scope (required for project-scoped caps)")),
+		), s.proxyCallWithThreadID("activate_cap", formatSimpleMessage))
+
+	s.srv.AddTool(
+		mcplib.NewTool("deactivate_cap",
+			mcplib.WithDescription("Deactivate a cap for the current thread (thread_id is auto-injected). The proxy stops re-injecting its registerTool snippet on subsequent turns."),
+			mcplib.WithString("name", mcplib.Required(), mcplib.Description("Capability name")),
+		), s.proxyCallWithThreadID("deactivate_cap", formatSimpleMessage))
+
+	s.srv.AddTool(
+		mcplib.NewTool("cap_store",
+			mcplib.WithDescription("Capability database — namespaced tables for structured data. Pass columns as JSON array [{name,type}] for create_table. Pass data as JSON object for upsert (include id to update). Pass args as JSON array of bind values for where clauses."),
+			mcplib.WithString("capability", mcplib.Required(), mcplib.Description("Capability name")),
+			mcplib.WithString("action", mcplib.Required(), mcplib.Description("create_table|upsert|query|delete|list_tables")),
+			mcplib.WithString("table", mcplib.Description("Table name")),
+			mcplib.WithString("columns", mcplib.Description("JSON array of {name,type} objects (create_table)")),
+			mcplib.WithString("data", mcplib.Description("JSON object with column values (upsert)")),
+			mcplib.WithString("where", mcplib.Description("WHERE clause with ? placeholders")),
+			mcplib.WithString("args", mcplib.Description("JSON array of bind values for WHERE")),
+			mcplib.WithNumber("limit", mcplib.Description("Max rows (query, default 100)")),
+		), s.proxyCallFormat("cap_store", formatSimpleMessage))
+
+	s.srv.AddTool(
 		mcplib.NewTool("query_facts",
 			mcplib.WithDescription("Search learning metadata by entity, action, or keyword"),
 			mcplib.WithString("entity", mcplib.Description("Entity filter (LIKE match)")),
@@ -973,7 +1046,7 @@ func (s *Server) registerTools() {
 	// ━━━ Plan management tools ━━━
 	s.srv.AddTool(
 		mcplib.NewTool("set_plan",
-			mcplib.WithDescription("Set the active plan"),
+			mcplib.WithDescription("Set the active plan (thread-scoped, survives proxy-collapse). Trigger: task with >5 tool cycles, >1 hypothesis, or multi-file scope. Primary anchor against context loss. Pair with update_plan."),
 			mcplib.WithString("plan", mcplib.Required(), mcplib.Description("Plan content (free text or structured list)")),
 			mcplib.WithString("scope", mcplib.Description("session|persistent")),
 		), s.proxyCallWithThreadID("set_plan", formatPlanResult))
@@ -982,9 +1055,9 @@ func (s *Server) registerTools() {
 		mcplib.NewTool("update_plan",
 			mcplib.WithDescription("Update active plan"),
 			mcplib.WithString("plan", mcplib.Description("Full replacement")),
-			mcplib.WithArray("completed", mcplib.Description("Items to mark done (substring match)")),
-			mcplib.WithArray("add", mcplib.Description("Items to add")),
-			mcplib.WithArray("remove", mcplib.Description("Items to remove (substring match)")),
+			mcplib.WithArray("completed", mcplib.WithStringItems(), mcplib.Description("Items to mark done (substring match)")),
+			mcplib.WithArray("add", mcplib.WithStringItems(), mcplib.Description("Items to add")),
+			mcplib.WithArray("remove", mcplib.WithStringItems(), mcplib.Description("Items to remove (substring match)")),
 		), s.proxyCallWithThreadID("update_plan", formatPlanResult))
 
 	s.srv.AddTool(
@@ -1237,6 +1310,39 @@ func (s *Server) registerTools() {
 			mcplib.WithString("project", mcplib.Required(), mcplib.Description("Project")),
 			mcplib.WithString("dir", mcplib.Description("Subdirectory to index (omit for project root)")),
 		), s.proxyCall("get_file_index"))
+
+	s.srv.AddTool(
+		mcplib.NewTool("dismiss_repl_pattern",
+			mcplib.WithDescription("Manually dismiss a recorded REPL command pattern from future cap-suggestion analysis, including legacy suggestions. Resets the pattern's count to 0. At 3 dismissals the pattern is flagged permanently ignored (review later via query_facts or hybrid_search)."),
+			mcplib.WithString("project", mcplib.Required(), mcplib.Description("Project name (as given in the suggestion)")),
+			mcplib.WithString("shape_hash", mcplib.Required(), mcplib.Description("16-char shape hash from the suggestion")),
+		), s.proxyCall("dismiss_repl_pattern"))
+
+	s.srv.AddTool(
+		mcplib.NewTool("dismiss_code_nav",
+			mcplib.WithDescription("Dismiss code-navigation suggestion for this session. Call when a Bash command was blocked by the code-nav hook but shell tools are preferred. After 5 dismissals per session, suggestions stop until next session."),
+			mcplib.WithString("session_id", mcplib.Required(), mcplib.Description("Session ID from the block message")),
+		), s.proxyCall("dismiss_code_nav"))
+
+	s.srv.AddTool(
+		mcplib.NewTool("schedule",
+			mcplib.WithDescription("Create, update, list, or run scheduled jobs. Jobs persist across daemon restarts."),
+			mcplib.WithString("action", mcplib.Required(), mcplib.Description("create|list|delete|run")),
+			mcplib.WithString("name", mcplib.Description("Job name (create)")),
+			mcplib.WithString("cron", mcplib.Description("5-field cron expression: min hour dom month dow (create)")),
+			mcplib.WithString("prompt", mcplib.Description("Prompt to execute on each run (create, run)")),
+			mcplib.WithBoolean("enabled", mcplib.Description("Whether the job is enabled (default true)")),
+			mcplib.WithBoolean("recurring", mcplib.Description("Whether the job repeats (default true). Set false for one-shot jobs that auto-delete after firing.")),
+			mcplib.WithString("id", mcplib.Description("Job ID (delete, run)")),
+			mcplib.WithString("mode", mcplib.Description("Execution mode: 'agent' (default), 'headless', or 'bash'")),
+			mcplib.WithString("cap_name", mcplib.Description("Cap name for bash mode (resolves handler_bash from saved cap)")),
+			mcplib.WithString("script_name", mcplib.Description("Script name within the cap to invoke (bash mode). When empty, the first handler/bash script wins; pass an explicit name to target a specific script (e.g. 'telegram_poll').")),
+			mcplib.WithBoolean("auto_correct", mcplib.Description("Auto-correct failed bash jobs via Sonnet (default true)")),
+			mcplib.WithString("allowed_ports", mcplib.Description("Comma-separated ports for sandbox network access (default '80,443')")),
+			mcplib.WithString("sandbox", mcplib.Description("Sandbox profile: none (no sandbox), standard (network-restricted, default), strict (filesystem + network restricted)")),
+			mcplib.WithNumber("interval_seconds", mcplib.Description("Fire every N seconds instead of cron. Overrides cron when set. Use for sub-minute scheduling (e.g. 15 for Telegram polling).")),
+			mcplib.WithString("model", mcplib.Description("Model override for headless/agent mode (e.g. claude-opus-4-7, claude-sonnet-4-6).")),
+		), s.proxyCall("schedule"))
 }
 
 // formatDocsSearchResult converts docs_search JSON into readable text with heading paths and content snippets.

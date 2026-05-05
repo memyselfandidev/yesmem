@@ -50,7 +50,7 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := s.prepareOpenAIRequestContext(anthReq, reqIdx, r.Header.Get("X-Claude-Code-Session-Id"))
+	ctx := s.prepareOpenAIRequestContext(anthReq, reqIdx, r.Header.Get("X-Claude-Code-Session-Id"), r.Header.Get("User-Agent"))
 	s.runOpenAIParityPipeline(anthReq, &ctx)
 
 	outReq, err := translateAnthropicToResponses(anthReq)

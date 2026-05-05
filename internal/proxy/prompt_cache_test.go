@@ -407,7 +407,14 @@ func TestShiftMessageBreakpoint_MovesToAssistant(t *testing.T) {
 	}
 }
 
-func TestShiftMessageBreakpoint_KeepsToolResult(t *testing.T) {
+func TestShiftMessageBreakpoint_ShiftsForToolResult(t *testing.T) {
+	// Tool-result messages used to be exempt from shifting (commit c155798, April 14)
+	// under the assumption they are stable cache anchors. After EagerStubMemory
+	// landed, that assumption no longer holds: the proxy itself mutates tool_result
+	// content from full to stub between turns, and a breakpoint sitting on the
+	// pre-mutation bytes invalidates the next turn's cache.
+	// The shift now also applies to tool_result-containing user messages: the
+	// breakpoint moves to the preceding assistant, which IS byte-stable.
 	req := map[string]any{
 		"messages": []any{
 			map[string]any{"role": "assistant", "content": []any{
@@ -422,17 +429,26 @@ func TestShiftMessageBreakpoint_KeepsToolResult(t *testing.T) {
 	}
 
 	shifted := ShiftMessageBreakpoint(req)
-	if shifted {
-		t.Fatal("expected NO shift for tool_result messages")
+	if !shifted {
+		t.Fatal("expected shift to succeed for tool_result messages (eager-stub mutates them)")
 	}
 
-	// User (tool_result) should still have cache_control
 	msgs := req["messages"].([]any)
+
+	// Assistant should now hold cache_control
+	asst := msgs[0].(map[string]any)
+	aContent := asst["content"].([]any)
+	aBlock := aContent[len(aContent)-1].(map[string]any)
+	if _, ok := aBlock["cache_control"]; !ok {
+		t.Error("expected cache_control on preceding assistant block")
+	}
+
+	// Tool_result must no longer carry cache_control
 	user := msgs[1].(map[string]any)
 	uContent := user["content"].([]any)
 	uBlock := uContent[0].(map[string]any)
-	if _, ok := uBlock["cache_control"]; !ok {
-		t.Error("tool_result should keep its cache_control")
+	if _, ok := uBlock["cache_control"]; ok {
+		t.Error("expected cache_control removed from tool_result message")
 	}
 }
 

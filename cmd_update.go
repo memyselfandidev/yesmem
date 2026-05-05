@@ -97,5 +97,20 @@ func runMigrateCmd() {
 		fmt.Println("  Hooks: OK")
 	}
 
+	// 5. Bundled skills
+	home, _ := os.UserHomeDir()
+	if n, err := setup.InstallBundledSkills(home); err != nil {
+		fmt.Fprintf(os.Stderr, "  Skills warning: %v\n", err)
+	} else {
+		fmt.Printf("  Skills: %d updated\n", n)
+	}
+
+	// 6. Bundled capabilities
+	if n, err := setup.InstallBundledCaps(home); err != nil {
+		fmt.Fprintf(os.Stderr, "  Caps warning: %v\n", err)
+	} else {
+		fmt.Printf("  Caps: %d updated\n", n)
+	}
+
 	fmt.Printf("Migration complete (version: %s)\n", buildinfo.Version)
 }

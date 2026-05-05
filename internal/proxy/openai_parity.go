@@ -20,6 +20,7 @@ type openAIRequestContext struct {
 	SessionID       string
 	Fingerprint     string
 	UserQuery       string
+	UserAgent       string
 	ToolUseIDs      []string
 	Retry           bool
 	EstimatedTokens int
@@ -83,7 +84,7 @@ func (s *Server) ensureOpenAIRuntimeState() {
 	s.lastInjectedIDsMu.Unlock()
 }
 
-func (s *Server) prepareOpenAIRequestContext(req map[string]any, reqIdx int, headerSessionID string) openAIRequestContext {
+func (s *Server) prepareOpenAIRequestContext(req map[string]any, reqIdx int, headerSessionID, userAgent string) openAIRequestContext {
 	messages, _ := req["messages"].([]any)
 	fp := requestFingerprint(messages)
 	ctx := openAIRequestContext{
@@ -92,6 +93,7 @@ func (s *Server) prepareOpenAIRequestContext(req map[string]any, reqIdx int, hea
 		SessionID:   extractSessionID(req, headerSessionID),
 		Fingerprint: fp,
 		UserQuery:   lastUserText(messages),
+		UserAgent:   userAgent,
 		ToolUseIDs:  extractToolUseIDs(messages),
 		Subagent:    isOpenAIProxySubagent(messages, req),
 	}
@@ -135,8 +137,12 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 
 	// prompt_rewrite: strip + inject (OpenAI parity path)
 	if s.cfg.PromptRewrite {
-		StripOutputEfficiency(req)
-		StripToneBrevity(req)
+		if !StripOutputEfficiency(req) {
+			s.logRewriteMiss("StripOutputEfficiency", ctx.UserAgent)
+		}
+		if !StripToneBrevity(req) {
+			s.logRewriteMiss("StripToneBrevity", ctx.UserAgent)
+		}
 		InjectAntDirectives(req)
 	}
 	if s.cfg.PromptEnhance {
@@ -151,6 +157,31 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 				}
 			}
 		}
+	}
+
+	if s.cfg.PromptToolPrefs {
+		InjectToolPrefs(req)
+	}
+	if s.cfg.PromptOutputDiscipline {
+		InjectOutputDiscipline(req)
+	}
+	if s.cfg.PromptCodingDiscipline {
+		InjectCodingDiscipline(req)
+	}
+	if s.cfg.PromptBeweislast {
+		InjectBeweislast(req)
+	}
+	if s.cfg.PromptScopeDiscipline {
+		InjectScopeDiscipline(req)
+	}
+	if s.cfg.PromptDelegationContract {
+		InjectDelegationContract(req)
+	}
+	if s.cfg.PromptClarifyFirst {
+		InjectClarifyFirst(req)
+	}
+	if s.cfg.PromptCodeToolsFirst {
+		InjectCodeToolsFirst(req)
 	}
 
 	messages, _ = req["messages"].([]any)
@@ -204,7 +235,7 @@ func (s *Server) runOpenAIParityPipeline(req map[string]any, ctx *openAIRequestC
 			freshTokens := s.countMessageTokens(freshMessages)
 			combinedTokens := frozen.Tokens + freshTokens + overhead
 			if combinedTokens > s.effectiveTokenThreshold(model) {
-				s.frozenStubs.Invalidate(ctx.ThreadID)
+				s.invalidateThreadCaches(ctx.ThreadID, ctx.Project, extractWorkingDirectory(req))
 				frozen = nil
 			} else {
 				combined := make([]any, 0, len(frozen.Messages)+len(freshMessages))
@@ -638,7 +669,9 @@ func (s *Server) forwardOpenAIWithTracking(w http.ResponseWriter, origReq *http.
 		}
 	}
 
-	var fwdModel struct{ Model string `json:"model"` }
+	var fwdModel struct {
+		Model string `json:"model"`
+	}
 	json.Unmarshal(body, &fwdModel)
 	s.finalizeOpenAIUsage(reqIdx, threadID, estimatedTokens, msgCount, usage, fwdModel.Model, rlJSON)
 

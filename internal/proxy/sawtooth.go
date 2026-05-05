@@ -185,6 +185,68 @@ func (f *FrozenStubs) Get(threadID string, currentMessages []any) *FrozenResult 
 	}
 }
 
+// LengthFor returns the number of frozen messages stored for threadID, or 0 if
+// no frozen entry exists. Used by the post-pipeline snapshot path to know how
+// many leading messages of req["messages"] should be re-snapshotted.
+func (f *FrozenStubs) LengthFor(threadID string) int {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if msgs, ok := f.messages[threadID]; ok {
+		return len(msgs)
+	}
+	return 0
+}
+
+// UpdateMessages overwrites the stored frozen prefix with newMsgs and refreshes
+// the prefix hash, so a later Get() call returns post-pipeline bytes (matching
+// the bytes that were sent on the wire on the FREEZE turn). Length must equal
+// the existing entry to guard against a second sawtooth firing inside the same
+// pipeline. Returns false if the entry does not exist or length mismatches.
+func (f *FrozenStubs) UpdateMessages(threadID string, newMsgs []any) bool {
+	f.mu.RLock()
+	existing, ok := f.messages[threadID]
+	f.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	if len(newMsgs) != len(existing) {
+		return false
+	}
+
+	fresh := deepCopyMessages(newMsgs)
+	if fresh == nil {
+		return false
+	}
+
+	freshJSON, _ := json.Marshal(fresh)
+	pHash := sha256hex(freshJSON)
+
+	f.mu.Lock()
+	f.messages[threadID] = fresh
+	f.prefixHash[threadID] = pHash
+	f.lastAccess[threadID] = time.Now()
+	cutoff := f.cutoff[threadID]
+	bHash := f.boundaryHash[threadID]
+	tokens := f.tokens[threadID]
+	rawTokens := f.rawTokens[threadID]
+	f.mu.Unlock()
+
+	if f.persistFn != nil {
+		fp := frozenPersisted{
+			Messages:     fresh,
+			Cutoff:       cutoff,
+			BoundaryHash: bHash,
+			PrefixHash:   pHash,
+			Tokens:       tokens,
+			RawTokens:    rawTokens,
+		}
+		if data, err := json.Marshal(fp); err == nil {
+			f.persistFn("frozen:"+threadID, string(data))
+		}
+	}
+	return true
+}
+
 // Invalidate removes frozen stubs for a thread.
 func (f *FrozenStubs) Invalidate(threadID string) {
 	f.mu.Lock()
@@ -591,4 +653,12 @@ func (st *SawtoothTrigger) loadFromDB(threadID string) {
 	}
 	st.lastTotalTokens[threadID] = state.Tokens
 	st.lastMessageCount[threadID] = state.MsgCount
+}
+
+// shouldInvalidateFrozen decides whether existing frozen stubs must be
+// re-created. Only the combined token count (frozen + fresh + overhead)
+// matters — lastTokens from the previous API response reflects the
+// PRE-collapse state and must not invalidate already-good stubs.
+func shouldInvalidateFrozen(combinedTokens, threshold int) bool {
+	return combinedTokens > threshold
 }

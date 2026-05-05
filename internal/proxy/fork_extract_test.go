@@ -82,7 +82,7 @@ func TestExtractAndEvaluatePrompt_NoPreviousLearnings(t *testing.T) {
 func TestParseExtractionResult(t *testing.T) {
 	response := `{
 		"learnings": [
-			{"content": "Always check cache before forking", "category": "gotcha", "entities": ["proxy", "fork"]}
+			{"content": "Always check cache before forking", "category": "gotcha", "task_type": "cap_idea", "entities": ["proxy", "fork"]}
 		],
 		"evaluations": [
 			{"learning_id": 42, "verdict": "useful", "reason": "Prevented bug", "action": "boost"}
@@ -103,6 +103,9 @@ func TestParseExtractionResult(t *testing.T) {
 	if result.Learnings[0].Content != "Always check cache before forking" {
 		t.Errorf("unexpected content: %s", result.Learnings[0].Content)
 	}
+	if result.Learnings[0].TaskType != "cap_idea" {
+		t.Errorf("expected task_type=cap_idea, got %q", result.Learnings[0].TaskType)
+	}
 	if len(result.Learnings[0].Entities) != 2 {
 		t.Errorf("expected 2 entities, got %d", len(result.Learnings[0].Entities))
 	}
@@ -114,6 +117,36 @@ func TestParseExtractionResult(t *testing.T) {
 	}
 	if result.Evaluations[0].Action != "boost" {
 		t.Errorf("expected action=boost, got %s", result.Evaluations[0].Action)
+	}
+}
+
+func TestExtractAndEvaluatePrompt_IncludesCapIdeaTaskType(t *testing.T) {
+	prompt := extractAndEvaluatePrompt(ForkContext{Project: "test"})
+	if strings.Count(prompt, "**Cap suggestions**") != 1 {
+		t.Errorf("expected exactly one detailed cap suggestions block, got %d", strings.Count(prompt, "**Cap suggestions**"))
+	}
+	for _, needle := range []string{
+		"cap_idea",
+		"task_type",
+		`category="unfinished"`,
+		"reusable cap",
+		"2+ tool-calls",
+		"stable, concise workflow names",
+		"deduplicate to the same intent",
+		`"task_type": "cap_idea"`,
+		"Be conservative",
+		"one-off exploration",
+		"Cap: <intent",
+		"NOT cap-worthy",
+	} {
+		if !strings.Contains(prompt, needle) {
+			t.Errorf("prompt missing %q", needle)
+		}
+	}
+	for _, existing := range []string{"gotcha", "decision", "pattern", "preference"} {
+		if !strings.Contains(prompt, existing) {
+			t.Errorf("regression: lost existing category %q", existing)
+		}
 	}
 }
 

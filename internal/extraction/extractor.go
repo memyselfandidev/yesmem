@@ -248,9 +248,10 @@ func (e *Extractor) runEvolution(store *storage.Store, onSupersede func(int64), 
 		return 0, 0
 	}
 	// Exclude narrative — handled separately by SupersedeNarrativesBySession
+	// Exclude capability — managed by save_capability auto-supersede, not LLM evolution
 	var filtered []string
 	for _, c := range categories {
-		if c != "narrative" {
+		if c != "narrative" && c != "cap" {
 			filtered = append(filtered, c)
 		}
 	}
@@ -722,6 +723,7 @@ func parseExtractionResponse(response, sessionID, model string) ([]models.Learni
 			CreatedAt:          now,
 			ModelUsed:          model,
 			Source:             "llm_extracted",
+			OriginTool:         "llm_extracted_session",
 			EmotionalIntensity: intensity,
 			SessionFlavor:      flavor,
 			Importance:         importance,
@@ -761,6 +763,7 @@ func addLearningsV2(items []learningItem, category, sessionID, model, domain str
 			CreatedAt:          ts,
 			ModelUsed:          model,
 			Source:             "llm_extracted",
+			OriginTool:         "llm_extracted_session",
 			EmotionalIntensity: intensity,
 			SessionFlavor:      flavor,
 			Importance:         importance,

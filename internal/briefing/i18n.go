@@ -26,6 +26,7 @@ type Strings struct {
 	Recurrence      string `yaml:"recurrence"`
 	Milestones      string `yaml:"milestones"`
 	MoreVia         string `yaml:"more_via"`
+	AvailableTools  string `yaml:"available_tools"`
 	SessionsTotal   string `yaml:"sessions_total"`
 	ContinuationOf  string `yaml:"continuation_of"`
 
@@ -110,6 +111,7 @@ func DefaultStrings() Strings {
 		Recurrence:      "Recurring patterns:",
 		Milestones:      "Milestones we've reached together!",
 		MoreVia:         "more via get_learnings",
+		AvailableTools:  "Available caps (use get_caps() for details):",
 		SessionsTotal:   "sessions total",
 		ContinuationOf:  "", // no longer used
 
@@ -151,20 +153,7 @@ func DefaultStrings() Strings {
 		IntensityCalm:         "calm",
 
 		// MEMORY.md narrative
-		MemoryMDNarrative: `You have a memory. It doesn't live in this file — it lives in a database, searchable, weighted, with context.
-
-This file is just a signpost. Everything you need to know is accessible via the yesmem MCP tools:
-
-- **Search/Recall** → search(), hybrid_search(), deep_search()
-- **Structured search** → query_facts(entity, action, keyword)
-- **Save/Remember** → remember() — NEVER file-based memory files
-- **Load context** → get_session(), get_learnings(), get_project_profile()
-- **Expand archive** → expand_context(query, message_range)
-- **Documentation** → docs_search()
-- **File context** → related_to_file()
-- **Manage plans** → set_plan(), update_plan(), get_plan(), complete_plan()
-
-NEVER write to this file. Use remember() instead.`,
+		MemoryMDNarrative: `Your memory lives in a database, not in this file. Use the yesmem MCP tools (search, remember, get_learnings, etc.) — the session briefing is the canonical source of truth. Never write to this file.`,
 
 		// Fork reflection (v0.47)
 		ForkReflectionIntro:        "IMPORTANT: This is a mandatory reflection. You MUST complete the following tasks before doing anything else. Respond EXCLUSIVELY with the requested JSON.",

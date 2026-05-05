@@ -20,13 +20,13 @@ func setupStore(t *testing.T) *storage.Store {
 
 	// Seed with test data
 	s.UpsertSession(&models.Session{
-		ID: "s1", Project: "/var/www/ccm19", ProjectShort: "ccm19",
+		ID: "s1", Project: "/var/www/myproject", ProjectShort: "myproject",
 		GitBranch: "main", FirstMessage: "Fix the cookie scanner timeout",
 		MessageCount: 20, StartedAt: time.Now().Add(-2 * time.Hour),
 		JSONLPath: "/s1.jsonl", IndexedAt: time.Now(),
 	})
 	s.UpsertSession(&models.Session{
-		ID: "s2", Project: "/var/www/ccm19", ProjectShort: "ccm19",
+		ID: "s2", Project: "/var/www/myproject", ProjectShort: "myproject",
 		GitBranch: "feature/auth", FirstMessage: "Refactor auth module",
 		MessageCount: 15, StartedAt: time.Now().Add(-48 * time.Hour),
 		JSONLPath: "/s2.jsonl", IndexedAt: time.Now(),
@@ -53,7 +53,7 @@ func setupStore(t *testing.T) *storage.Store {
 func TestGenerateContainsToolReference(t *testing.T) {
 	store := setupStore(t)
 	gen := New(store, 3)
-	text := gen.Generate("/var/www/ccm19")
+	text := gen.Generate("/var/www/myproject")
 
 	if !strings.Contains(text, "search(query)") {
 		t.Error("briefing should contain search tool")
@@ -75,7 +75,7 @@ func TestGenerateContainsToolReference(t *testing.T) {
 func TestGenerateContainsLearnings(t *testing.T) {
 	store := setupStore(t)
 	gen := New(store, 3)
-	text := gen.Generate("/var/www/ccm19")
+	text := gen.Generate("/var/www/myproject")
 
 	if !strings.Contains(text, "Docker needs no sudo") {
 		t.Error("briefing should contain gotcha learning")
@@ -88,9 +88,9 @@ func TestGenerateContainsLearnings(t *testing.T) {
 func TestGenerateContainsSessions(t *testing.T) {
 	store := setupStore(t)
 	gen := New(store, 3)
-	text := gen.Generate("/var/www/ccm19")
+	text := gen.Generate("/var/www/myproject")
 
-	if !strings.Contains(text, "ccm19") {
+	if !strings.Contains(text, "myproject") {
 		t.Error("briefing should contain project name")
 	}
 	if !strings.Contains(text, "cookie scanner timeout") {
@@ -135,7 +135,7 @@ func TestRelativeTime(t *testing.T) {
 func TestGenerateNarrativeFormat(t *testing.T) {
 	store := setupStore(t)
 	gen := New(store, 3)
-	text := gen.Generate("/var/www/ccm19")
+	text := gen.Generate("/var/www/myproject")
 
 	// Should NOT contain old format markers
 	if strings.Contains(text, "━━━") {
@@ -192,7 +192,7 @@ func TestGenerateDeduplicatesLearnings(t *testing.T) {
 func TestGenerateMaxSessions(t *testing.T) {
 	store := setupStore(t)
 	gen := New(store, 2) // Only 2 sessions max
-	text := gen.Generate("/var/www/ccm19")
+	text := gen.Generate("/var/www/myproject")
 
 	// Should show only 2 sessions, not more
 	if strings.Contains(text, "project_summary") {
@@ -210,20 +210,20 @@ func TestGenerateWithNarratives(t *testing.T) {
 
 	// Add a session so project exists
 	store.UpsertSession(&models.Session{
-		ID: "s1", Project: "/var/www/ccm19", ProjectShort: "ccm19",
+		ID: "s1", Project: "/var/www/myproject", ProjectShort: "myproject",
 		StartedAt: time.Now().Add(-2 * time.Hour), MessageCount: 20,
 		JSONLPath: "/s1.jsonl", IndexedAt: time.Now(),
 	})
 
 	// Add narrative learnings
 	store.InsertLearning(&models.Learning{
-		Category: "narrative", Project: "ccm19", SessionID: "s1",
+		Category: "narrative", Project: "myproject", SessionID: "s1",
 		Content:   "Hey, du bist ich von vorhin. Wir haben den Cookie-Scanner gefixt.",
 		CreatedAt: time.Now().Add(-1 * time.Hour), ModelUsed: "haiku",
 	})
 
 	gen := New(store, 3)
-	text := gen.Generate("/var/www/ccm19")
+	text := gen.Generate("/var/www/myproject")
 
 	// Should contain the awakening template intro (>1 session = "I'm back")
 	if !strings.Contains(text, "I'm back") && !strings.Contains(text, "First encounter") {
@@ -406,6 +406,54 @@ func TestSetSkipUnfinished_SuppressesUnfinishedSection(t *testing.T) {
 	genSkip.SetSkipUnfinished(true)
 	if strings.Contains(genSkip.Generate("/var/www/proj"), "refactor auth module") {
 		t.Error("SetSkipUnfinished(true): unfinished item must not appear in briefing")
+	}
+}
+
+func TestBriefingShowsCapIdeasAboveThreshold(t *testing.T) {
+	store, _ := storage.Open(":memory:")
+	defer store.Close()
+
+	store.UpsertSession(&models.Session{
+		ID: "s1", Project: "/var/www/p", ProjectShort: "p",
+		StartedAt: time.Now(), JSONLPath: "/s1.jsonl", IndexedAt: time.Now(),
+	})
+
+	aboveID, err := store.InsertLearning(&models.Learning{
+		Category: "unfinished", TaskType: "cap_idea",
+		Content: "Cap: Telegram polling; yesmem telegram poll",
+		Project: "p", Confidence: 1.0,
+		CreatedAt: time.Now(), ModelUsed: "test",
+	})
+	if err != nil {
+		t.Fatalf("insert above-threshold cap idea: %v", err)
+	}
+	if _, err := store.DB().Exec(`UPDATE learnings SET match_count = 4 WHERE id = ?`, aboveID); err != nil {
+		t.Fatalf("set above-threshold match_count: %v", err)
+	}
+
+	belowID, err := store.InsertLearning(&models.Learning{
+		Category: "unfinished", TaskType: "cap_idea",
+		Content: "Cap: One-off; yesmem one",
+		Project: "p", Confidence: 1.0,
+		CreatedAt: time.Now(), ModelUsed: "test",
+	})
+	if err != nil {
+		t.Fatalf("insert below-threshold cap idea: %v", err)
+	}
+	if _, err := store.DB().Exec(`UPDATE learnings SET match_count = 2 WHERE id = ?`, belowID); err != nil {
+		t.Fatalf("set below-threshold match_count: %v", err)
+	}
+
+	out := New(store, 3).Generate("/var/www/p")
+
+	if !strings.Contains(out, "Cap suggestions from recent work") {
+		t.Error("briefing missing cap suggestions section header")
+	}
+	if !strings.Contains(out, "Telegram polling") {
+		t.Error("briefing missing above-threshold cap idea content")
+	}
+	if strings.Contains(out, "One-off") {
+		t.Error("briefing must not show below-threshold cap ideas")
 	}
 }
 

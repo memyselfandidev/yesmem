@@ -252,7 +252,7 @@ func TestParseGitActiveZones_Empty(t *testing.T) {
 }
 
 func TestParseGitActiveZones_RootFiles(t *testing.T) {
-	gitOutput := "main.go\ncmd_telegram.go\n"
+	gitOutput := "main.go\ncmd_scratchpad.go\n"
 	zones := parseGitActiveZones(gitOutput)
 	if len(zones) != 1 || zones[0].Package != "." {
 		t.Errorf("expected root package '.', got %v", zones)

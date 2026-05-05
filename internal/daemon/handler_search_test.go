@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/carsteneu/yesmem/internal/models"
+	"github.com/carsteneu/yesmem/internal/storage"
 )
 
 func TestDeepSearchExcludesCurrentSession(t *testing.T) {
@@ -193,5 +194,123 @@ func TestExpandContextQueryDoesNotExcludeSession(t *testing.T) {
 	}
 	if !found {
 		t.Error("expand_context should return own session's messages, but didn't")
+	}
+}
+
+// seedDateMessages inserts three messages dated 2026-04-27/28/29 sharing a unique
+// FTS-friendly token so date filtering can be observed via search/deep_search.
+func seedDateMessages(t *testing.T, s *storage.Store) {
+	t.Helper()
+	db := s.DB()
+	if _, err := db.Exec(`INSERT INTO sessions(id, project, project_short, message_count, started_at, jsonl_path, indexed_at) VALUES ('date-session', '/test', 'test', 3, ?, '/tmp/date-session.jsonl', ?)`,
+		"2026-04-27T10:00:00Z", "2026-04-29T10:00:00Z"); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	rows := []struct {
+		ts  string
+		seq int
+	}{
+		{"2026-04-27T10:00:00Z", 1},
+		{"2026-04-28T19:57:16Z", 2},
+		{"2026-04-29T08:30:00Z", 3},
+	}
+	for _, r := range rows {
+		if _, err := db.Exec(`INSERT INTO messages(session_id, role, message_type, content, timestamp, sequence) VALUES ('date-session', 'assistant', 'text', 'needle_dateflag '||?, ?, ?)`, r.ts, r.ts, r.seq); err != nil {
+			t.Fatalf("seed message %d: %v", r.seq, err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO messages_fts(rowid, content) SELECT id, content FROM messages WHERE id NOT IN (SELECT rowid FROM messages_fts)`); err != nil {
+		t.Fatalf("seed fts: %v", err)
+	}
+}
+
+func TestSearchAcceptsSinceFilter(t *testing.T) {
+	h, s := mustHandler(t)
+	seedDateMessages(t, s)
+
+	resp := h.Handle(Request{
+		Method: "search",
+		Params: map[string]any{
+			"query": "needle_dateflag",
+			"since": "2026-04-28",
+			"limit": float64(50),
+		},
+	})
+	if resp.Error != "" {
+		t.Fatalf("search error: %s", resp.Error)
+	}
+	var results []map[string]any
+	b, _ := json.Marshal(resp.Result)
+	json.Unmarshal(b, &results)
+
+	for _, r := range results {
+		ts, _ := r["timestamp"].(string)
+		if ts < "2026-04-28" {
+			t.Errorf("since=2026-04-28 returned earlier hit ts=%q", ts)
+		}
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one hit on/after 2026-04-28")
+	}
+}
+
+func TestSearchAcceptsBeforeFilter(t *testing.T) {
+	h, s := mustHandler(t)
+	seedDateMessages(t, s)
+
+	resp := h.Handle(Request{
+		Method: "search",
+		Params: map[string]any{
+			"query":  "needle_dateflag",
+			"before": "2026-04-29",
+			"limit":  float64(50),
+		},
+	})
+	if resp.Error != "" {
+		t.Fatalf("search error: %s", resp.Error)
+	}
+	var results []map[string]any
+	b, _ := json.Marshal(resp.Result)
+	json.Unmarshal(b, &results)
+
+	for _, r := range results {
+		ts, _ := r["timestamp"].(string)
+		if ts >= "2026-04-29" {
+			t.Errorf("before=2026-04-29 returned later hit ts=%q", ts)
+		}
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one hit before 2026-04-29")
+	}
+}
+
+func TestDeepSearchAcceptsDateBounds(t *testing.T) {
+	h, s := mustHandler(t)
+	seedDateMessages(t, s)
+
+	resp := h.Handle(Request{
+		Method: "deep_search",
+		Params: map[string]any{
+			"query":  "needle_dateflag",
+			"since":  "2026-04-28",
+			"before": "2026-04-29",
+			"limit":  float64(50),
+		},
+	})
+	if resp.Error != "" {
+		t.Fatalf("deep_search error: %s", resp.Error)
+	}
+	var results []map[string]any
+	b, _ := json.Marshal(resp.Result)
+	json.Unmarshal(b, &results)
+
+	if len(results) != 1 {
+		t.Fatalf("expected exactly one hit on 2026-04-28, got %d", len(results))
+	}
+	for _, r := range results {
+		ts, _ := r["timestamp"].(string)
+		if ts < "2026-04-28" || ts >= "2026-04-29" {
+			t.Errorf("date window violated: ts=%q", ts)
+		}
 	}
 }

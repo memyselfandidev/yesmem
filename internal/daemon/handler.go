@@ -11,6 +11,7 @@ import (
 	"github.com/carsteneu/yesmem/internal/bloom"
 	"github.com/carsteneu/yesmem/internal/embedding"
 	"github.com/carsteneu/yesmem/internal/extraction"
+	"github.com/carsteneu/yesmem/internal/sanitize"
 	"github.com/carsteneu/yesmem/internal/storage"
 )
 
@@ -31,9 +32,12 @@ type Handler struct {
 	dataDir          string        // ~/.claude/yesmem/ — set by daemon after construction
 	agentTerminal    string        // preferred terminal for agent windows — set by daemon from config
 	agentMaxRuntime  time.Duration // max runtime per agent — set by daemon from config
+	scheduler        *Scheduler
 	agentMaxTurns    int           // max relay turns per agent — set by daemon from config
 	agentMaxDepth    int           // max spawn depth — set by daemon from config
-	agentTokenBudget int           // max tokens per agent — set by daemon from config
+	agentTokenBudget      int            // max tokens per agent — set by daemon from config
+	defaultSandboxProfile SandboxProfile // default sandbox for scheduled jobs — set by daemon from config
+	redactor              sanitize.Sanitizer // optional; nil = passthrough
 
 	// Optional: vector search (set via SetEmbedding)
 	indexer             *embedding.Indexer
@@ -54,6 +58,18 @@ type Handler struct {
 	// Recent remember cache — proxy pops this to inject into current session
 	recentRememberMu sync.Mutex
 	recentRemembered []recentLearning // id+text of recently remembered learnings
+
+	headlessSessionsMu sync.Mutex
+	headlessSessions   map[string]string // jobID -> sessionID (in-memory, lost on restart)
+
+	// Auto-correct rate limiting (T4): per-cap cooldown + cross-tick semaphore.
+	// Bash-job auto-correct is rate-limited so a cap with a persistent bug
+	// can't burn through the LLM budget. autoCorrectRunning gives mutual
+	// exclusion across concurrent ticks; autoCorrectCooldown[cap] holds the
+	// timestamp until which further attempts on that cap will be skipped.
+	autoCorrectMu       sync.Mutex
+	autoCorrectRunning  bool
+	autoCorrectCooldown map[string]time.Time
 
 	// Optional: called after mutations. Nil in tests.
 	OnMutation func()
@@ -169,7 +185,7 @@ type idleTickResult struct {
 
 // NewHandler creates a request handler with access to all daemon resources.
 func NewHandler(store *storage.Store, bloomMgr *bloom.Manager) *Handler {
-	h := &Handler{store: store, bloom: bloomMgr, pidMap: make(map[string]int), windowMap: make(map[string]string), terminalMap: make(map[string]string)}
+	h := &Handler{store: store, bloom: bloomMgr, pidMap: make(map[string]int), windowMap: make(map[string]string), terminalMap: make(map[string]string), headlessSessions: make(map[string]string), autoCorrectCooldown: make(map[string]time.Time)}
 	h.initIdleState()
 	return h
 }
@@ -247,6 +263,26 @@ func (h *Handler) Handle(req Request) Response {
 		return h.handleProjectSummary(h.resolveProjectParam(req.Params))
 	case "get_learnings":
 		return h.handleGetLearnings(h.resolveProjectParam(req.Params))
+	case "get_caps":
+		return h.handleGetCaps(h.resolveProjectParam(req.Params))
+	case "save_cap":
+		return h.handleSaveCap(h.resolveProjectParam(req.Params))
+	case "register_caps":
+		return h.handleRegisterCaps(h.resolveProjectParam(req.Params))
+	case "activate_cap":
+		return h.handleActivateCap(h.resolveProjectParam(req.Params))
+	case "deactivate_cap":
+		// No project scope: activations are keyed on (thread_id, name).
+		return h.handleDeactivateCap(req.Params)
+	case "get_active_caps":
+		// Internal: called by the proxy via RPC, not exposed as an MCP tool.
+		return h.handleGetActiveCaps(req.Params)
+	case "cap_store":
+		return h.handleCapStore(req.Params)
+	case "cap_proposal_decide":
+		return h.handleCapProposalDecide(req)
+	case "list_cap_proposals":
+		return h.handleListCapProposals(req)
 	case "query_facts":
 		return h.handleQueryFacts(h.resolveProjectParam(req.Params))
 	case "related_to_file":
@@ -291,6 +327,26 @@ func (h *Handler) Handle(req Request) Response {
 		return h.handleVectorSearch(h.resolveProjectParam(req.Params))
 	case "get_compacted_stubs":
 		return h.handleGetCompactedStubs(req.Params)
+	case "record_repl_pattern":
+		// Internal: called by the proxy via RPC, not exposed as an MCP tool.
+		return h.handleRecordReplPattern(req.Params)
+	case "record_turn_sequence":
+		// Internal: called by the proxy via RPC, not exposed as an MCP tool.
+		return h.handleRecordTurnSequence(req.Params)
+	case "get_repl_pattern_suggestion":
+		// Internal: called by the proxy via RPC, not exposed as an MCP tool.
+		return h.handleGetReplPatternSuggestion(req.Params)
+	case "dismiss_repl_pattern":
+		return h.handleDismissReplPattern(h.resolveProjectParam(req.Params))
+	case "dismiss_code_nav":
+		sessionID, _ := req.Params["session_id"].(string)
+		if sessionID == "" {
+			return errorResponse("session_id required")
+		}
+		if err := h.store.DismissCodeNav(sessionID); err != nil {
+			return errorResponse(err.Error())
+		}
+		return jsonResponse(map[string]any{"status": "ok", "session_id": sessionID})
 	case "expand_context":
 		return h.handleExpandContext(req.Params)
 	case "store_compacted_block":
@@ -499,6 +555,9 @@ func (h *Handler) Handle(req Request) Response {
 		return h.handleGetCodeSnippet(req.Params)
 	case "get_file_symbols":
 		return h.handleGetFileSymbols(req.Params)
+
+	case "schedule":
+		return h.handleSchedule(req.Params)
 
 	default:
 		return errorResponse(fmt.Sprintf("unknown method: %s", req.Method))

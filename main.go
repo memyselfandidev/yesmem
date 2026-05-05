@@ -102,6 +102,10 @@ func main() {
 		runResolveCheck()
 	case "backfill-flavor":
 		runBackfillFlavor()
+	case "wiki-render":
+		if err := runWikiRender(os.Args[2:]); err != nil {
+			log.Fatalf("wiki-render: %v", err)
+		}
 	case "proxy":
 		runProxy()
 	case "stop":
@@ -150,12 +154,22 @@ func main() {
 		runCheckUpdate()
 	case "update":
 		runUpdate()
-	// case "telegram-bridge":
-	// 	runTelegramBridge() // disabled — WIP, re-enable when ready
 case "migrate":
 		runMigrateCmd()
 	case "scratchpad":
 		runScratchpad()
+	case "cap-store":
+		runCapStoreCLI(os.Args[2:])
+	case "store":
+		runStore(os.Args[2:])
+	case "query":
+		runQuery(os.Args[2:])
+	case "json":
+		runJSON(os.Args[2:])
+	case "cap-blob-put":
+		runCapBlobPut()
+	case "cap-blob-get":
+		runCapBlobGet()
 	case "spawn-agents":
 		runSpawnAgents(os.Args[2:])
 	case "agent-tty":

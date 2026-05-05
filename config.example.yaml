@@ -249,6 +249,28 @@ claudemd:
   # Model for operative reference generation. Empty = use narrative_model.
   # model: ""
 
+# --- Secrets Sanitization ---
+# Redact secret-like substrings from LLM input/output and persisted bash output.
+# Off by default; enable explicitly to opt in.
+#
+# AllowedExceptions are matched against the FULL pattern match, not substrings.
+# For most patterns the match is the bare token (for generic_api_key the match
+# form is keyword=value or keyword:value; for bearer_token the match form is
+# Bearer <value> with case-insensitive scheme), so listing the exact token value works.
+#
+# Two template-style patterns capture surrounding context as part of their match:
+#   - aws_secret_access_key: match includes the keyword+separator preamble
+#     (e.g. "aws_secret_access_key=THEKEY40CHARS"), not the bare key alone
+#   - password_in_url: match includes scheme://user: prefix and @host suffix
+#     (e.g. "https://user:mypassword@host"), not the bare password alone
+#
+# Template-style patterns ignore allowed_exceptions entirely. To suppress redaction
+# for a value matched by aws_secret_access_key or password_in_url, omit that pattern
+# by constructing a custom redactor.
+secrets_sanitization:
+  enabled: false
+  allowed_exceptions: []
+
 # --- Paths (optional) ---
 # All paths have sensible defaults under ~/.claude/yesmem/.
 # Only set these if you need a custom location.

@@ -219,10 +219,21 @@ func (h *Handler) spawnAgentProcess(id, sessionID, project, section, prompt, soc
 				conn.Close()
 			}
 
-			// Wait for MCP server to connect, then send actual prompt
+			// Wait for MCP server to connect, then send actual prompt.
+			// Split writes: prompt body first, then a separate \r after a
+			// short delay so the TUI does NOT treat the trailing \r as
+			// part of a bracketed-paste block (which would add a newline
+			// to the input instead of submitting). The second write opens
+			// its own connection so the terminal sees the submit Enter
+			// outside the paste window.
 			time.Sleep(5 * time.Second)
 			if conn, err := net.DialTimeout("unix", injectPath, 3*time.Second); err == nil {
-				conn.Write([]byte(prompt + "\r"))
+				conn.Write([]byte(prompt))
+				conn.Close()
+			}
+			time.Sleep(300 * time.Millisecond)
+			if conn, err := net.DialTimeout("unix", injectPath, 3*time.Second); err == nil {
+				conn.Write([]byte("\r"))
 				conn.Close()
 			}
 		}()

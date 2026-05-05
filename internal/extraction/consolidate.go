@@ -273,7 +273,7 @@ func runRuleBasedEvolution(store *storage.Store, onSupersede func(int64)) (int, 
 	totalChecked, totalSuperseded := 0, 0
 
 	for _, cat := range categories {
-		if cat == "narrative" {
+		if cat == "narrative" || cat == "cap" {
 			continue
 		}
 		learnings, err := store.GetActiveLearnings(cat, "", "", "")

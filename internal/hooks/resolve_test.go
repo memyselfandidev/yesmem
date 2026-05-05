@@ -25,7 +25,7 @@ func TestResolveMatchingTask_IgnoresCrossProject(t *testing.T) {
 
 	store.InsertLearning(&models.Learning{
 		Category: "unfinished", Content: "fix autoRestore.js API calls",
-		Project: "/home/testuser/projects/ccm19", Confidence: 1.0, CreatedAt: time.Now(), ModelUsed: "haiku",
+		Project: "/home/testuser/projects/myproject", Confidence: 1.0, CreatedAt: time.Now(), ModelUsed: "haiku",
 	})
 
 	msg := resolveMatchingTask(store, "fix autoRestore API calls", "/home/testuser/projects/yesmem")

@@ -9,6 +9,7 @@ import (
 	"github.com/carsteneu/yesmem/internal/config"
 	"github.com/carsteneu/yesmem/internal/extraction"
 	"github.com/carsteneu/yesmem/internal/models"
+	"github.com/carsteneu/yesmem/internal/sanitize"
 	"github.com/carsteneu/yesmem/internal/storage"
 )
 
@@ -16,6 +17,12 @@ import (
 // Output goes to stderr in a structured format parseable by setup progress.
 // Phases: Extraction → Evolution → Narratives → Clustering → Profiles → Persona → ClaudeMD
 func RunQuickstart(store *storage.Store, cfg *config.Config, client extraction.LLMClient, qualityClient extraction.LLMClient, lastN int) error {
+	if cfg.SecretsSanitization.Enabled {
+		redactor := sanitize.NewSecretRedactor(cfg.SecretsSanitization.AllowedExceptions)
+		client = extraction.NewSanitizingClient(client, redactor)
+		qualityClient = extraction.NewSanitizingClient(qualityClient, redactor)
+	}
+
 	sessions, err := store.ListSessions("", lastN)
 	if err != nil {
 		return fmt.Errorf("list sessions: %w", err)
@@ -53,7 +60,7 @@ func RunQuickstart(store *storage.Store, cfg *config.Config, client extraction.L
 		}
 	}
 
-	// Create extractor
+	// Create extractor on the (already-wrapped, when enabled) client
 	ext := extraction.NewExtractor(client, store)
 
 	// ━━━ Phase 2: Extraction ━━━

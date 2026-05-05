@@ -57,8 +57,8 @@ func TestBuildThinkReminder_Basic(t *testing.T) {
 	if !strings.Contains(r, "prefer visible timestamps and current state before memory lookup") {
 		t.Error("expected direct-status guardrail")
 	}
-	if !strings.Contains(r, "use it instead of starting a new memory lookup") {
-		t.Error("expected existing-context guardrail")
+	if !strings.Contains(r, "supplements but does not replace memory") {
+		t.Error("expected memory-first guardrail")
 	}
 	if strings.Contains(r, "remember()") {
 		t.Error("first call should NOT contain learning extraction reminder")
@@ -84,8 +84,8 @@ func TestBuildThinkReminder_NonClaudeUsesSelectiveSearchText(t *testing.T) {
 	if !strings.Contains(r, "prefer visible timestamps and current state before memory lookup") {
 		t.Error("expected direct-status guardrail")
 	}
-	if !strings.Contains(r, "use it instead of starting a new memory lookup") {
-		t.Error("expected existing-context guardrail")
+	if !strings.Contains(r, "supplements but does not replace memory") {
+		t.Error("expected memory-first guardrail")
 	}
 }
 

@@ -110,6 +110,7 @@ func setProxyEnvVar(settings map[string]any) {
 		env = map[string]any{}
 	}
 	env["ANTHROPIC_BASE_URL"] = "http://localhost:9099"
+	env["CLAUDE_CODE_REPL"] = "true"
 	settings["env"] = env
 }
 
@@ -133,10 +134,77 @@ func removeProxyEnvVar(settings map[string]any) {
 	}
 }
 
-// registerMCPPermissions adds mcp__yesmem__* to permissions.allow so all
-// yesmem MCP tools are auto-allowed without permission dialog.
+// registerMCPPermissions adds all yesmem MCP tools to permissions.allow
+// individually. Wildcards (mcp__yesmem__*) are silently ignored by Claude Code.
 func registerMCPPermissions(settings map[string]any) {
-	const rule = "mcp__yesmem__*"
+	tools := []string{
+		"mcp__yesmem__search",
+		"mcp__yesmem__remember",
+		"mcp__yesmem__pin",
+		"mcp__yesmem__unpin",
+		"mcp__yesmem__get_pins",
+		"mcp__yesmem__send_to",
+		"mcp__yesmem__broadcast",
+		"mcp__yesmem__deep_search",
+		"mcp__yesmem__get_session",
+		"mcp__yesmem__list_projects",
+		"mcp__yesmem__project_summary",
+		"mcp__yesmem__get_learnings",
+		"mcp__yesmem__query_facts",
+		"mcp__yesmem__related_to_file",
+		"mcp__yesmem__get_coverage",
+		"mcp__yesmem__get_project_profile",
+		"mcp__yesmem__get_self_feedback",
+		"mcp__yesmem__set_persona",
+		"mcp__yesmem__get_persona",
+		"mcp__yesmem__resolve",
+		"mcp__yesmem__resolve_by_text",
+		"mcp__yesmem__quarantine_session",
+		"mcp__yesmem__skip_indexing",
+		"mcp__yesmem__set_plan",
+		"mcp__yesmem__update_plan",
+		"mcp__yesmem__get_plan",
+		"mcp__yesmem__complete_plan",
+		"mcp__yesmem__hybrid_search",
+		"mcp__yesmem__get_compacted_stubs",
+		"mcp__yesmem__expand_context",
+		"mcp__yesmem__set_config",
+		"mcp__yesmem__get_config",
+		"mcp__yesmem__docs_search",
+		"mcp__yesmem__list_docs",
+		"mcp__yesmem__ingest_docs",
+		"mcp__yesmem__remove_docs",
+		"mcp__yesmem__scratchpad_write",
+		"mcp__yesmem__scratchpad_read",
+		"mcp__yesmem__scratchpad_list",
+		"mcp__yesmem__scratchpad_delete",
+		"mcp__yesmem__spawn_agent",
+		"mcp__yesmem__relay_agent",
+		"mcp__yesmem__stop_agent",
+		"mcp__yesmem__resume_agent",
+		"mcp__yesmem__list_agents",
+		"mcp__yesmem__get_agent",
+		"mcp__yesmem__update_agent_status",
+		"mcp__yesmem__whoami",
+		"mcp__yesmem__stop_all_agents",
+		"mcp__yesmem__activate_cap",
+		"mcp__yesmem__deactivate_cap",
+		"mcp__yesmem__save_cap",
+		"mcp__yesmem__get_caps",
+		"mcp__yesmem__register_caps",
+		"mcp__yesmem__cap_store",
+		"mcp__yesmem__get_code_context",
+		"mcp__yesmem__get_code_snippet",
+		"mcp__yesmem__get_dependency_map",
+		"mcp__yesmem__get_file_index",
+		"mcp__yesmem__get_file_symbols",
+		"mcp__yesmem__graph_traverse",
+		"mcp__yesmem__search_code",
+		"mcp__yesmem__search_code_index",
+		"mcp__yesmem__dismiss_code_nav",
+		"mcp__yesmem__dismiss_repl_pattern",
+		"mcp__yesmem__relate_learnings",
+	}
 
 	perms, ok := settings["permissions"].(map[string]any)
 	if !ok {
@@ -148,13 +216,19 @@ func registerMCPPermissions(settings map[string]any) {
 		allow = []any{}
 	}
 
+	existing := make(map[string]bool, len(allow))
 	for _, v := range allow {
-		if v == rule {
-			return
+		if s, ok := v.(string); ok {
+			existing[s] = true
 		}
 	}
 
-	allow = append(allow, rule)
+	for _, tool := range tools {
+		if !existing[tool] {
+			allow = append(allow, tool)
+		}
+	}
+
 	perms["allow"] = allow
 	settings["permissions"] = perms
 }
@@ -415,10 +489,13 @@ func addPreToolUseHook(hooks map[string]any, binaryPath string) {
 		existing = []any{}
 	}
 
-	for _, entry := range existing {
+	for i, entry := range existing {
 		if m, ok := entry.(map[string]any); ok {
 			for _, h := range toHookSlice(m["hooks"]) {
 				if cmd, ok := h["command"].(string); ok && strings.Contains(cmd, "yesmem") {
+					m["matcher"] = ".*"
+					existing[i] = m
+					hooks["PreToolUse"] = existing
 					return
 				}
 			}
@@ -426,7 +503,7 @@ func addPreToolUseHook(hooks map[string]any, binaryPath string) {
 	}
 
 	existing = append(existing, map[string]any{
-		"matcher": "Bash|Edit|Write",
+		"matcher": ".*",
 		"hooks": []any{
 			map[string]any{
 				"type":    "command",
@@ -475,11 +552,14 @@ func addPostToolUseFailureCombinedHook(hooks map[string]any, binaryPath string) 
 		existing = []any{}
 	}
 
-	// Check if already registered
-	for _, entry := range existing {
+	// Check if already registered — update matcher if needed
+	for i, entry := range existing {
 		if m, ok := entry.(map[string]any); ok {
 			for _, h := range toHookSlice(m["hooks"]) {
 				if cmd, ok := h["command"].(string); ok && strings.Contains(cmd, "hook-failure") {
+					m["matcher"] = ".*"
+					existing[i] = m
+					hooks["PostToolUseFailure"] = existing
 					return
 				}
 			}
@@ -514,7 +594,7 @@ func addPostToolUseFailureCombinedHook(hooks map[string]any, binaryPath string) 
 
 	// Fallback: add as new entry
 	existing = append(existing, map[string]any{
-		"matcher": "Bash|WebFetch|WebSearch",
+		"matcher": ".*",
 		"hooks": []any{
 			map[string]any{
 				"type":    "command",

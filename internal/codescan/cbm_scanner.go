@@ -141,12 +141,23 @@ func (s *CBMScanner) Scan(rootDir string) (*ScanResult, error) {
 	var stats ProjectStats
 	var allFiles []FileInfo
 
-	// Query imports (available for JS/TS/Python/Ruby in CBM v0.6.0+, Go pending)
+	// Query imports (available for JS/TS/Python/Ruby in CBM v0.6.0+, Go pending).
+	// Fallback: if IMPORTS edges are empty, derive from CALLS edges.
 	importRows, err := cbmQuery(bin, project, `MATCH (a)-[:IMPORTS]->(b) RETURN a.file_path, b.name ORDER BY a.file_path`)
 	if err != nil {
 		log.Printf("cbm: imports query: %v", err)
 	}
 	fileImports := parseImportRows(importRows)
+	if len(fileImports) == 0 {
+		// Fallback: derive per-file imports from CALLS edges across packages.
+		callsRows, err := cbmQuery(bin, project, `MATCH (a)-[:CALLS]->(b) RETURN a.file_path, b.file_path ORDER BY a.file_path`)
+		if err == nil && len(callsRows) > 0 {
+			fileImports = deriveImportsFromCalls(callsRows)
+			if len(fileImports) > 0 {
+				log.Printf("cbm: derived %d file→imports from CALLS edges", len(fileImports))
+			}
+		}
+	}
 
 	// Query entry points (func main + HTTP routes)
 	entryRows, err := cbmQuery(bin, project, `MATCH (f) WHERE f.label = 'Function' AND f.name = 'main' RETURN f.name, f.file_path`)
@@ -535,4 +546,39 @@ func gitActiveZones(rootDir string) []ActiveZone {
 		return nil
 	}
 	return parseGitActiveZones(string(out))
+}
+
+// deriveImportsFromCalls builds a file→imports map from CALLS edges.
+// A file "imports" a target if it calls a function in a different package.
+// Target is the package directory (e.g. "internal/proxy"), unique per source file.
+func deriveImportsFromCalls(rows [][]interface{}) map[string][]string {
+	// Build: sourceFile → set of target packages
+	raw := make(map[string]map[string]bool)
+	for _, row := range rows {
+		if len(row) < 2 {
+			continue
+		}
+		srcFile, _ := row[0].(string)
+		tgtFile, _ := row[1].(string)
+		if srcFile == "" || tgtFile == "" || srcFile == tgtFile {
+			continue
+		}
+		srcPkg := filepath.Dir(srcFile)
+		tgtPkg := filepath.Dir(tgtFile)
+		if srcPkg == tgtPkg {
+			continue // same package, not an import
+		}
+		if raw[srcFile] == nil {
+			raw[srcFile] = make(map[string]bool)
+		}
+		raw[srcFile][tgtPkg] = true
+	}
+	out := make(map[string][]string, len(raw))
+	for file, pkgs := range raw {
+		for pkg := range pkgs {
+			out[file] = append(out[file], pkg)
+		}
+		sort.Strings(out[file])
+	}
+	return out
 }

@@ -82,6 +82,11 @@ const tmplProject = `{{if or .D.Profile .D.Sessions}}
 {{end}}
 {{end}}`
 
+const tmplCaps = `{{if .D.Items}}
+{{.S.AvailableTools}}
+{{range .D.Items}}- {{.}}
+{{end}}{{end}}`
+
 const tmplOpenWork = `{{if .D.Items}}
 {{if .D.IsReminder}}{{.S.UserReminder}}{{else}}{{.S.OpenWork}}{{end}}
 {{if .D.AbsenceNote}}({{.D.AbsenceNote}})
@@ -166,6 +171,11 @@ type KnowledgeData struct {
 	MoreTeachings int
 	Pivots        []string
 	MorePivots    int
+}
+
+// CapsData holds capability names for the briefing hint.
+type CapsData struct {
+	Items []string
 }
 
 // ProjectData holds current project info and recent sessions.

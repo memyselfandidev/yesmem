@@ -10,9 +10,9 @@ func TestAddAndTraverse(t *testing.T) {
 	g := New()
 
 	g.AddEdge("session", "s1", "file", "/etc/nginx/conf", 1)
-	g.AddEdge("session", "s1", "project", "ccm19", 1)
+	g.AddEdge("session", "s1", "project", "myproject", 1)
 	g.AddEdge("session", "s2", "file", "/etc/nginx/conf", 1)
-	g.AddEdge("session", "s2", "project", "ccm19", 1)
+	g.AddEdge("session", "s2", "project", "myproject", 1)
 	g.AddEdge("session", "s3", "project", "green", 1)
 
 	// From s1, depth 1: should find file and project nodes

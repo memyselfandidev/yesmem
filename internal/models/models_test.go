@@ -8,7 +8,7 @@ import (
 func TestSessionFields(t *testing.T) {
 	s := Session{
 		ID:           "005aac34-1de8-44b2-96e9-b815ed92be00",
-		Project:      "/var/www/html/ccm19/cookie-consent-management",
+		Project:      "/var/www/html/webapp/cookie-consent-management",
 		ProjectShort: "cookie-consent-management",
 		GitBranch:    "main",
 		FirstMessage: "Fix the auth module",
@@ -31,9 +31,9 @@ func TestProjectShortFromPath(t *testing.T) {
 		path     string
 		expected string
 	}{
-		{"/var/www/html/ccm19/cookie-consent-management", "cookie-consent-management"},
+		{"/var/www/html/webapp/cookie-consent-management", "cookie-consent-management"},
 		{"/home/user/memory", "memory"},
-		{"/var/www/html/GreenWashProjekt/greenwashCCm19/cookie-consent-management", "cookie-consent-management"},
+		{"/var/www/html/projects/webapp/cookie-consent-management", "cookie-consent-management"},
 		{"/", ""},
 		{"", ""},
 	}
@@ -58,7 +58,7 @@ func TestIsValidMessageType(t *testing.T) {
 }
 
 func TestIsValidCategory(t *testing.T) {
-	valid := []string{"explicit_teaching", "gotcha", "decision", "pattern", "preference", "unfinished", "relationship", "strategic"}
+	valid := []string{"explicit_teaching", "gotcha", "decision", "pattern", "preference", "unfinished", "relationship", "strategic", "cap"}
 	for _, cat := range valid {
 		if !IsValidCategory(cat) {
 			t.Errorf("expected '%s' to be valid category", cat)

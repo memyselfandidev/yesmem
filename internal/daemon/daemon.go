@@ -30,6 +30,7 @@ import (
 	"github.com/carsteneu/yesmem/internal/indexer"
 	"github.com/carsteneu/yesmem/internal/ingest"
 	"github.com/carsteneu/yesmem/internal/ivf"
+	"github.com/carsteneu/yesmem/internal/sanitize"
 	"github.com/carsteneu/yesmem/internal/storage"
 	"github.com/carsteneu/yesmem/internal/update"
 )
@@ -48,6 +49,16 @@ func embeddingCacheModelKey(cfg *config.Config) string {
 		return cfg.Embedding.Provider
 	}
 	return "unknown"
+}
+
+// wrapWithSanitizationIfEnabled wraps c with a SanitizingClient when sanitization
+// is enabled. Returns c unchanged when c, cfg, or r is nil, or when
+// cfg.SecretsSanitization.Enabled is false.
+func wrapWithSanitizationIfEnabled(c extraction.LLMClient, cfg *config.Config, r sanitize.Sanitizer) extraction.LLMClient {
+	if c == nil || cfg == nil || !cfg.SecretsSanitization.Enabled || r == nil {
+		return c
+	}
+	return extraction.NewSanitizingClient(c, r)
 }
 
 // ReadClaudeCodeAPIKey reads the API key from Claude Code's config.json.
@@ -116,6 +127,10 @@ func Run(cfg Config) error {
 		log.Printf("[warn] agents schema migration: %v", err)
 	}
 
+	if err := store.OpenCapsDB(cfg.DataDir); err != nil {
+		log.Printf("[warn] cap_store open: %v", err)
+	}
+
 	// Backfill valid_until on old superseded learnings (one-time, idempotent)
 	if res, err := store.DB().Exec(`UPDATE learnings SET valid_until = datetime('now')
 		WHERE superseded_by IS NOT NULL AND valid_until IS NULL`); err == nil {
@@ -158,6 +173,14 @@ func Run(cfg Config) error {
 		if ac.Agents.TokenBudget > 0 {
 			handler.agentTokenBudget = ac.Agents.TokenBudget
 		}
+		if ac.DefaultSandboxProfile != "" {
+			if p, err := ParseSandboxProfile(ac.DefaultSandboxProfile); err == nil {
+				handler.defaultSandboxProfile = p
+			}
+		}
+		if ac.SecretsSanitization.Enabled {
+			handler.redactor = sanitize.NewSecretRedactor(ac.SecretsSanitization.AllowedExceptions)
+		}
 	}
 	LoadPlansFromDB(store)
 
@@ -182,6 +205,73 @@ func Run(cfg Config) error {
 	go socketSrv.Serve()
 	defer socketSrv.Close()
 	log.Println("Socket ready for MCP connections.")
+
+	// Sync CAP.md files from disk into DB (user-scoped caps)
+	userCapsDir := filepath.Join(filepath.Dir(cfg.DataDir), "caps")
+	go func() {
+		SyncCapsFromDisk(handler, userCapsDir, "")
+		ExportAllCaps(handler, userCapsDir)
+	}()
+
+	// Periodic CAP.md watcher — re-imports changed files every 30s
+	go func() {
+		watcher := NewCapsDirWatcher()
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			changed := watcher.ScanChanged(userCapsDir)
+			for _, cf := range changed {
+				params := CapFileToParams(cf)
+				resp := handler.handleSaveCap(params)
+				if resp.Error != "" {
+					log.Printf("[cap-watch] save %s: %s", cf.Name, resp.Error)
+				} else {
+					log.Printf("[cap-watch] imported %s from disk", cf.Name)
+				}
+				watcher.RefreshMtime(cf.SourcePath)
+			}
+		}
+	}()
+
+	// ━━━ Scheduler ━━━
+	sched := NewScheduler(func(job ScheduledJob) {
+		log.Printf("[scheduler] firing job %s: %s", job.Name, job.Prompt)
+		handler.executeScheduledPrompt(job)
+		_ = handler.store.UpdateJobLastRun(job.ID, time.Now())
+	})
+	handler.scheduler = sched
+
+	// Load persisted jobs from DB
+	if dbJobs, err := handler.store.ListScheduledJobs(); err == nil {
+		for _, dj := range dbJobs {
+			sbProfile, _ := ParseSandboxProfile(dj.Sandbox)
+			sched.AddJob(ScheduledJob{
+				ID: dj.ID, Name: dj.Name, Cron: dj.Cron,
+				Prompt: dj.Prompt, Enabled: dj.Enabled, Recurring: dj.Recurring, Mode: dj.Mode,
+				CapName: dj.CapName, ScriptName: dj.ScriptName, AutoCorrect: dj.AutoCorrect, AllowedPorts: dj.AllowedPorts,
+				Sandbox: sbProfile, IntervalSeconds: dj.IntervalSeconds, Model: dj.Model, LastRun: dj.LastRun,
+			})
+		}
+		if len(dbJobs) > 0 {
+			log.Printf("[scheduler] loaded %d jobs from DB", len(dbJobs))
+		}
+	}
+
+	// Scheduler tick goroutine
+	schedCtx, schedCancel := context.WithCancel(context.Background())
+	defer schedCancel()
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case t := <-ticker.C:
+				sched.Tick(t)
+			case <-schedCtx.Done():
+				return
+			}
+		}
+	}()
 
 	// ━━━ HTTP API (optional, for OpenClaw) ━━━
 	if cfg.HTTPEnabled {
@@ -218,6 +308,9 @@ func Run(cfg Config) error {
 
 	// Agent heartbeat — polls for messages targeting running agents, relays via inject socket
 	go handler.startAgentHeartbeat(daemonCtx)
+
+	// Wiki render ticker — rebuilds wiki for all active projects every 5min
+	startWikiTicker(daemonCtx, store)
 
 	// Extractor holder — set asynchronously after config is loaded
 	var (
@@ -355,7 +448,7 @@ func Run(cfg Config) error {
 			summarizeModel := ac.SummarizeModelID()
 			sc, scErr := extraction.NewLLMClient(ac.LLM.Provider, apiKey, summarizeModel, ac.LLM.ClaudeBinary, baseURL)
 			if scErr == nil && sc != nil {
-				handler.SummarizeClient = sc
+				handler.SummarizeClient = wrapWithSanitizationIfEnabled(sc, ac, sanitize.NewSecretRedactor(ac.SecretsSanitization.AllowedExceptions))
 				log.Printf("Summarize client ready: %s (for rules/destillation)", summarizeModel)
 			}
 		}
@@ -545,7 +638,11 @@ func Run(cfg Config) error {
 			log.Printf("LLM backend: %s (model: %s)", client.Name(), ac.Extraction.Model)
 
 			// Always create single-pass extractor for evolution
-			evoExt := extraction.NewExtractor(client, store)
+			evoClient := client
+			if ac.SecretsSanitization.Enabled && handler.redactor != nil {
+				evoClient = extraction.NewSanitizingClient(client, handler.redactor)
+			}
+			evoExt := extraction.NewExtractor(evoClient, store)
 
 			// Create session extractor based on mode
 			var ext extraction.SessionExtractor
@@ -580,7 +677,12 @@ func Run(cfg Config) error {
 						ebc.ThrottleFn = throttleFn
 						extractClient = ebc
 					}
-					ext = extraction.NewTwoPassExtractor(summarizeClient, extractClient, store)
+					{
+						summarizeClient, extractClient := summarizeClient, extractClient
+						summarizeClient = wrapWithSanitizationIfEnabled(summarizeClient, ac, handler.redactor)
+						extractClient = wrapWithSanitizationIfEnabled(extractClient, ac, handler.redactor)
+						ext = extraction.NewTwoPassExtractor(summarizeClient, extractClient, store)
+					}
 					log.Printf("Extraction mode: two-pass (summarize=%s, extract=%s)", summarizeClient.Model(), extractClient.Model())
 					// Make summarize client available for doc destillation
 					handler.SummarizeClient = summarizeClient
@@ -721,6 +823,10 @@ func Run(cfg Config) error {
 			extMu.Unlock()
 			if gate != nil {
 				briefingClient = extraction.NewGatedClient(briefingClient, gate, "quality")
+			}
+			if ac.SecretsSanitization.Enabled {
+				briefingClient = extraction.NewSanitizingClient(briefingClient,
+					sanitize.NewSecretRedactor(ac.SecretsSanitization.AllowedExceptions))
 			}
 		}
 

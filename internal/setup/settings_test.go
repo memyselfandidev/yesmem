@@ -19,8 +19,17 @@ func TestRegisterMCPPermissions_Empty(t *testing.T) {
 	if !ok {
 		t.Fatal("permissions.allow not set")
 	}
-	if len(allow) != 1 || allow[0] != "mcp__yesmem__*" {
-		t.Fatalf("expected [mcp__yesmem__*], got %v", allow)
+	if len(allow) < 60 {
+		t.Fatalf("expected 60+ individual MCP tool entries, got %d", len(allow))
+	}
+	found := false
+	for _, v := range allow {
+		if v == "mcp__yesmem__activate_cap" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("missing mcp__yesmem__activate_cap")
 	}
 }
 
@@ -34,17 +43,20 @@ func TestRegisterMCPPermissions_ExistingPermissions(t *testing.T) {
 
 	perms := settings["permissions"].(map[string]any)
 	allow := perms["allow"].([]any)
-	if len(allow) != 3 {
-		t.Fatalf("expected 3 entries, got %d: %v", len(allow), allow)
+	if len(allow) < 62 {
+		t.Fatalf("expected 62+ entries (2 existing + 60+ tools), got %d", len(allow))
+	}
+	if allow[0] != "Bash(git:*)" || allow[1] != "WebSearch" {
+		t.Fatalf("existing entries should be preserved at start: %v", allow[:2])
 	}
 	found := false
 	for _, v := range allow {
-		if v == "mcp__yesmem__*" {
+		if v == "mcp__yesmem__activate_cap" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("mcp__yesmem__* not found in %v", allow)
+		t.Fatal("mcp__yesmem__activate_cap not found")
 	}
 }
 
@@ -129,8 +141,8 @@ func TestRegisterMCPPermissions_PermissionsWithoutAllow(t *testing.T) {
 	if !ok {
 		t.Fatal("permissions.allow not created")
 	}
-	if len(allow) != 1 || allow[0] != "mcp__yesmem__*" {
-		t.Fatalf("expected [mcp__yesmem__*], got %v", allow)
+	if len(allow) < 60 {
+		t.Fatalf("expected 60+ individual MCP tool entries, got %d", len(allow))
 	}
 	// defaultMode should be preserved
 	if perms["defaultMode"] != "default" {

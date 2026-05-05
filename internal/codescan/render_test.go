@@ -148,26 +148,20 @@ func TestRenderCodeMap_Large_SpecEbene1(t *testing.T) {
 
 	// Spec: sorted by file count — proxy (65) before bloom (2)
 	idxProxy := strings.Index(md, "proxy")
-	idxBloom := strings.Index(md, "bloom")
-	if idxProxy < 0 || idxBloom < 0 {
-		t.Error("proxy and bloom should both appear")
-	} else if idxProxy > idxBloom {
-		t.Error("proxy (65 files) should appear before bloom (2 files) — sort by file count desc")
+	if idxProxy < 0 {
+		t.Error("proxy should appear")
 	}
 
-	// Spec: small packages get individual rows with descriptions (no collapse)
-	if strings.Contains(md, "+") && strings.Contains(md, "packages") {
-		t.Error("should NOT collapse packages — all get individual rows")
+	// bloom (2 files) is in the collapsed tail (+2 packages) — not individually listed.
+	// verify the collapsed count line is present.
+	if !strings.Contains(md, "+2 packages:") {
+		t.Errorf("should collapse remaining 2 packages with name-drops; got:\n%s", md[:500])
 	}
 
-	// All packages should have their own row
-	if !strings.Contains(md, "bloom") {
-		t.Error("small package 'bloom' should have its own row")
-	}
-
-	// Spec: NO LOC field (was buggy, not in spec)
-	if strings.Contains(md, "LOC") {
-		t.Error("should not contain LOC (not in spec)")
+	// Spec: NO LOC field as a table column (was buggy, not in spec).
+	// Prose mention of LOC in the briefing intro is allowed (describes packages.md content).
+	if strings.Contains(md, "| LOC ") || strings.Contains(md, " LOC |") {
+		t.Error("should not contain LOC table column (not in spec)")
 	}
 
 	t.Logf("Rendered code map:\n%s", md)
@@ -584,5 +578,108 @@ func TestRenderActiveZones_Empty(t *testing.T) {
 	result := renderActiveZones(nil, 10)
 	if result != "" {
 		t.Errorf("expected empty for nil, got %q", result)
+	}
+}
+
+// ── Codemap Shrink Tests ────────────────────────────────────────────
+
+func TestRenderLarge_SortsByActivityScore(t *testing.T) {
+	result := &ScanResult{
+		RootDir: "/tmp/proj",
+		Stats:   ProjectStats{FileCount: 100},
+		Packages: []PackageInfo{
+			{Name: "internal/cold", FileCount: 50},
+			{Name: "internal/hot", FileCount: 5},
+			{Name: "internal/medium", FileCount: 20},
+		},
+		ActiveZones: []ActiveZone{
+			{Package: "internal/hot", ChangeCount: 100},
+			{Package: "internal/medium", ChangeCount: 30},
+			{Package: "internal/cold", ChangeCount: 0},
+		},
+	}
+	out := renderLarge(result, nil, nil)
+	hotIdx := strings.Index(out, "internal/hot")
+	coldIdx := strings.Index(out, "internal/cold")
+	if hotIdx == -1 || coldIdx == -1 {
+		t.Fatalf("packages missing in output:\n%s", out)
+	}
+	if hotIdx > coldIdx {
+		t.Errorf("expected internal/hot before internal/cold, got hot=%d cold=%d", hotIdx, coldIdx)
+	}
+}
+
+func TestRenderLarge_CollapsedTableTail(t *testing.T) {
+	pkgs := make([]PackageInfo, 20)
+	for i := range pkgs {
+		pkgs[i] = PackageInfo{Name: fmt.Sprintf("pkg%02d", i), FileCount: 20 - i}
+	}
+	result := &ScanResult{
+		RootDir:  "/tmp/proj",
+		Stats:    ProjectStats{FileCount: 100},
+		Packages: pkgs,
+	}
+	out := renderLarge(result, nil, nil)
+	rowCount := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "| pkg") {
+			rowCount++
+		}
+	}
+	if rowCount > 10 {
+		t.Errorf("expected at most 10 data rows, got %d", rowCount)
+	}
+	if rowCount < 1 {
+		t.Errorf("expected at least 1 data row, got 0")
+	}
+	if !strings.Contains(out, "+10 packages") {
+		t.Errorf("expected '+10 packages' collapsed footer:\n%s", out)
+	}
+}
+
+func TestRenderLarge_NoKeyFilesNoChangeCouplingNoActiveZones(t *testing.T) {
+	result := &ScanResult{
+		RootDir: "/tmp/proj",
+		Stats:   ProjectStats{FileCount: 100},
+		Packages: []PackageInfo{
+			{Name: "internal/x", FileCount: 10},
+		},
+		KeyFiles: map[string][]string{
+			"internal/x": {"a.go", "b.go"},
+		},
+		ChangeCoupling: []ChangePair{
+			{FileA: "internal/x/a.go", FileB: "internal/y/b.go"},
+		},
+		ActiveZones: []ActiveZone{
+			{Package: "internal/x", ChangeCount: 10},
+		},
+	}
+	out := renderLarge(result, nil, nil)
+	for _, banned := range []string{"### Key Files", "### Change Coupling", "### Active Zones"} {
+		if strings.Contains(out, banned) {
+			t.Errorf("renderLarge must NOT contain %q:\n%s", banned, out)
+		}
+	}
+}
+
+func TestRenderLarge_IncludesWikiLink(t *testing.T) {
+	result := &ScanResult{
+		RootDir: "/tmp/yesmem",
+		Stats:   ProjectStats{FileCount: 700},
+		Packages: []PackageInfo{
+			{Name: "internal/proxy", FileCount: 130},
+			{Name: "internal/daemon", FileCount: 70},
+		},
+	}
+	out := renderLarge(result, nil, nil)
+	for _, expect := range []string{
+		"Full code map:",
+		"~/.claude/yesmem/wiki/yesmem/",
+		"Browse `packages.md`",
+		"search_code_index",
+	} {
+		if !strings.Contains(out, expect) {
+			t.Errorf("missing %q in renderLarge output:\n%s", expect, out)
+		}
 	}
 }

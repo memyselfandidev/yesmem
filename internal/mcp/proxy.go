@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/carsteneu/yesmem/internal/daemon"
@@ -181,6 +182,17 @@ func dialWithTimeout(dataDir string, timeout time.Duration) (*daemon.SocketClien
 }
 
 func startDaemon(dataDir string) error {
+	// Fork-bomb guard: under `go test` os.Executable() resolves to the
+	// *.test binary, not yesmem. Spawning that with "daemon --replace"
+	// re-runs the entire test suite in the child, which calls mcp.New()
+	// again, which lands here, which forks again — earlyoom kills the
+	// machine before the kernel can. Refuse early and let the caller
+	// (NewProxy → New) continue with proxy=nil, which is harmless for
+	// tests that only need the registered tool schema.
+	if testing.Testing() {
+		return fmt.Errorf("startDaemon refused under go test (os.Executable() points to *.test → fork bomb risk); construct *Server manually if you need the daemon path")
+	}
+
 	// Find the yesmem binary
 	exe, err := os.Executable()
 	if err != nil {

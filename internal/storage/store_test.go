@@ -448,7 +448,7 @@ func TestAssociations(t *testing.T) {
 
 	assocs := []models.Association{
 		{SourceType: "session", SourceID: "s1", TargetType: "file", TargetID: "/etc/nginx/conf", Weight: 1},
-		{SourceType: "session", SourceID: "s1", TargetType: "project", TargetID: "ccm19", Weight: 1},
+		{SourceType: "session", SourceID: "s1", TargetType: "project", TargetID: "myproject", Weight: 1},
 		{SourceType: "session", SourceID: "s2", TargetType: "file", TargetID: "/etc/nginx/conf", Weight: 1},
 	}
 	if err := s.InsertAssociationBatch(assocs); err != nil {
@@ -496,11 +496,11 @@ func TestListProjects(t *testing.T) {
 	s := mustOpen(t)
 
 	s.UpsertSession(&models.Session{
-		ID: "s1", Project: "/var/www/ccm19", ProjectShort: "ccm19",
+		ID: "s1", Project: "/var/www/myproject", ProjectShort: "myproject",
 		StartedAt: time.Now(), JSONLPath: "/s1.jsonl", IndexedAt: time.Now(),
 	})
 	s.UpsertSession(&models.Session{
-		ID: "s2", Project: "/var/www/ccm19", ProjectShort: "ccm19",
+		ID: "s2", Project: "/var/www/myproject", ProjectShort: "myproject",
 		StartedAt: time.Now(), JSONLPath: "/s2.jsonl", IndexedAt: time.Now(),
 	})
 	s.UpsertSession(&models.Session{
@@ -518,12 +518,12 @@ func TestListProjects(t *testing.T) {
 
 	found := false
 	for _, p := range projects {
-		if p.ProjectShort == "ccm19" && p.SessionCount == 2 {
+		if p.ProjectShort == "myproject" && p.SessionCount == 2 {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected ccm19 with 2 sessions")
+		t.Error("expected myproject with 2 sessions")
 	}
 }
 

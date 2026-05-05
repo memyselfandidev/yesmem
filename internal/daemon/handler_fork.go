@@ -42,6 +42,7 @@ func (h *Handler) handleForkExtractLearnings(params map[string]any) Response {
 	var learnings []struct {
 		Content            string   `json:"content"`
 		Category           string   `json:"category"`
+		TaskType           string   `json:"task_type"`
 		Entities           []string `json:"entities"`
 		Status             string   `json:"status"`
 		Context            string   `json:"context"`
@@ -81,6 +82,8 @@ func (h *Handler) handleForkExtractLearnings(params map[string]any) Response {
 			Importance:         l.Importance,
 			EmotionalIntensity: l.EmotionalIntensity,
 			CreatedAt:          time.Now(),
+			// Codex: keep fork-emitted unfinished subtypes, especially cap_idea.
+			TaskType:           l.TaskType,
 			Entities:           l.Entities,
 			Context:            l.Context,
 			Actions:            l.Actions,

@@ -147,6 +147,7 @@ func (g *Generator) Generate(projectDir string) string {
 		b.WriteString(g.renderPerson(s, allLearnings))
 	}
 	b.WriteString(g.renderKnowledge(s, allLearnings))
+	b.WriteString(g.renderCaps(s, allLearnings))
 
 	milestones := g.loadMilestones(narratives)
 	b.WriteString(g.renderMilestones(s, milestones))
@@ -233,10 +234,7 @@ func (g *Generator) resolveProject(projectDir string) string {
 
 // loadLearnings fetches project-specific and global learnings.
 func (g *Generator) loadLearnings(projectShort string) []models.Learning {
-	learnings, err := g.store.GetActiveLearnings("", projectShort, "", "")
-	if err != nil || len(learnings) == 0 {
-		learnings, _ = g.store.GetActiveLearnings("", "", "", "")
-	}
+	learnings, _ := g.store.GetActiveLearnings("", projectShort, "", "")
 	return learnings
 }
 
@@ -492,6 +490,27 @@ func (g *Generator) renderKnowledge(s Strings, learnings []models.Learning) stri
 		Pivots:        pivots,
 		MorePivots:    morePivots,
 	})
+}
+
+func (g *Generator) renderCaps(s Strings, learnings []models.Learning) string {
+	var items []string
+	for _, l := range learnings {
+		if l.Category != "cap" {
+			continue
+		}
+		line := l.Content
+		if len(l.Keywords) > 0 {
+			line += " (" + strings.Join(l.Keywords, ", ") + ")"
+		}
+		items = append(items, line)
+		if len(items) >= g.maxPerCategory {
+			break
+		}
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	return renderTemplate("capabilities", tmplCaps, s, CapsData{Items: items})
 }
 
 func (g *Generator) renderProject(s Strings, projectShort, profile string, sessions []models.Session) string {
@@ -796,6 +815,8 @@ func (g *Generator) renderOpenWork(s Strings, unfinished []models.Learning, abse
 	// Count ideas and stale before filtering them out
 	ideaCount := 0
 	staleCount := 0
+	const capIdeaThreshold = 3
+	var capIdeas []models.Learning
 	var actionable []models.Learning
 	for _, l := range unfinished {
 		switch l.TaskType {
@@ -803,6 +824,11 @@ func (g *Generator) renderOpenWork(s Strings, unfinished []models.Learning, abse
 			ideaCount++
 		case "stale":
 			staleCount++
+		case "cap_idea":
+			// Codex: cap suggestions are surfaced separately from normal open tasks.
+			if l.MatchCount >= capIdeaThreshold {
+				capIdeas = append(capIdeas, l)
+			}
 		default: // "task", "blocked", "" (legacy)
 			actionable = append(actionable, l)
 		}
@@ -818,7 +844,7 @@ func (g *Generator) renderOpenWork(s Strings, unfinished []models.Learning, abse
 			}
 		}
 		unfinished = filtered
-		if len(unfinished) == 0 && ideaCount == 0 && staleCount == 0 {
+		if len(unfinished) == 0 && ideaCount == 0 && staleCount == 0 && len(capIdeas) == 0 {
 			return ""
 		}
 	}
@@ -857,6 +883,19 @@ func (g *Generator) renderOpenWork(s Strings, unfinished []models.Learning, abse
 		})
 	}
 
+	capIdeasBlock := ""
+	if len(capIdeas) > 0 {
+		var b strings.Builder
+		// Codex: keep cap ideas visible even when no regular open-work item remains.
+		b.WriteString("\n**Cap suggestions from recent work** (workflows that came up multiple times):\n\n")
+		for _, c := range capIdeas {
+			fmt.Fprintf(&b, "- [#%d] %s - seen %dx\n", c.ID, c.Content, c.MatchCount)
+		}
+		b.WriteString("\nConfirm: `remember(text=\"<intent>\", category=\"unfinished\", task_type=\"task\", supersedes=<ID>)`\n")
+		b.WriteString("Dismiss: `resolve_by_text(text=\"<content-substring>\", project=\"<project>\")`\n")
+		capIdeasBlock = b.String()
+	}
+
 	data := OpenWorkData{
 		Items:      items,
 		IsReminder: isReminder,
@@ -867,7 +906,7 @@ func (g *Generator) renderOpenWork(s Strings, unfinished []models.Learning, abse
 		data.AbsenceNote = formatAbsence(absenceHours)
 	}
 
-	result := renderTemplate("openwork", tmplOpenWork, s, data)
+	result := capIdeasBlock + renderTemplate("openwork", tmplOpenWork, s, data)
 	return result
 }
 

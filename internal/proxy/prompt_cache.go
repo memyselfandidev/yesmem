@@ -144,10 +144,17 @@ func ShiftMessageBreakpoint(req map[string]any) bool {
 		return false
 	}
 
-	// Tool-results are stable — don't shift
-	if isToolResultMessage(lastMsg) {
-		return false
-	}
+	// Tool-result messages were exempted in commit c155798 (2026-04-14) under
+	// the assumption they are stable cache anchors. After EagerStubMemory
+	// landed, that assumption no longer holds: the proxy itself mutates
+	// tool_result content (full → stub) between turns, and a breakpoint sitting
+	// on the pre-mutation bytes invalidates the next turn's cache prefix.
+	// The shift now also applies to tool_result-containing user messages: the
+	// breakpoint moves to the preceding assistant, which IS byte-stable.
+	// See TestShiftMessageBreakpoint_ShiftsForToolResult.
+	// if isToolResultMessage(lastMsg) {
+	// 	return false
+	// }
 
 	// Find and remove cache_control from the last user message
 	cc := removeCacheControl(lastMsg)

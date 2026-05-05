@@ -20,6 +20,7 @@ type ExtractionResult struct {
 type ExtractedLearning struct {
 	Content            string   `json:"content"`
 	Category           string   `json:"category"`
+	TaskType           string   `json:"task_type,omitempty"`
 	Entities           []string `json:"entities"`
 	Status             string   `json:"status"` // new, confirmed, revised, invalidated
 	Context            string   `json:"context,omitempty"`
@@ -72,7 +73,7 @@ func extractAndEvaluatePrompt(ctx ForkContext) string {
 	sb.WriteString(strs.ForkTaskLearningsQuestions)
 	sb.WriteString("\n\n")
 	sb.WriteString("Categories: gotcha, decision, pattern, preference, explicit_teaching, strategic, unfinished, pivot_moment\n")
-	sb.WriteString("- unfinished: open tasks, ideas, blocked work (task_type: task|idea|blocked)\n")
+	sb.WriteString("- unfinished: open tasks, ideas, blocked work (task_type: task|idea|blocked|cap_idea)\n")
 	sb.WriteString("- pivot_moment: direction change in the session — approach abandoned, new path taken\n")
 	sb.WriteString("Status: new, confirmed, revised, invalidated\n")
 	sb.WriteString("importance: 1-5 (1=nice-to-know, 3=useful, 5=critical — without this knowledge something breaks)\n")
@@ -102,8 +103,28 @@ func extractAndEvaluatePrompt(ctx ForkContext) string {
 		sb.WriteString("\n\n")
 	}
 
+	sb.WriteString("**Cap suggestions** — when you observe a *cluster of 2+ tool-calls that together\n")
+	sb.WriteString("accomplish a single intent that the user might want to script as a reusable cap*,\n")
+	sb.WriteString("emit it as a learning with category=\"unfinished\" and task_type=\"cap_idea\".\n")
+	sb.WriteString("Prefer stable, concise workflow names over session-specific details so repeated\n")
+	sb.WriteString("sessions can deduplicate to the same intent. Examples worth emitting: a curl+jq+cap_store\n")
+	sb.WriteString("polling loop, a multi-step git+sqlite verification sequence, a sequence of greps/reads that always run\n")
+	sb.WriteString("together. NOT cap-worthy: one-off debug greps that converged on a fix; isolated\n")
+	sb.WriteString("single tool-calls; clusters without a clear shared intent.\n\n")
+	sb.WriteString("For cap suggestions emit `content` in this format:\n")
+	sb.WriteString("  \"Cap: <intent (<=80 chars)>; <skeleton-hint (<=80 chars)>\"\n\n")
+	sb.WriteString("Example:\n")
+	sb.WriteString("  {\n")
+	sb.WriteString("    \"category\": \"unfinished\",\n")
+	sb.WriteString("    \"task_type\": \"cap_idea\",\n")
+	sb.WriteString("    \"content\": \"Cap: Telegram getUpdates polling with offset persistence; yesmem telegram poll [--offset N]\"\n")
+	sb.WriteString("  }\n\n")
+	sb.WriteString("Be conservative. If unsure, skip — empty emission is a valid answer. Do NOT\n")
+	sb.WriteString("emit cap_idea entries for one-off exploration; only for workflows you'd expect\n")
+	sb.WriteString("to recur.\n\n")
+
 	sb.WriteString("Antwortformat — NUR valides JSON, kein anderer Text:\n")
-	sb.WriteString(`{"learnings": [{"content": "...", "category": "...", "entities": ["..."], "actions": ["..."], "keywords": ["..."], "anticipated_queries": ["Suchphrase 1", "Suchphrase 2"], "context": "Warum relevant", "status": "new|confirmed|revised|invalidated", "importance": 3, "emotional_intensity": 0.2}], "evaluations": [{"learning_id": N, "verdict": "...", "reason": "...", "action": "...", "impact_score": 0.0}], "contradictions": [{"learning_a": N, "learning_b": M, "description": "..."}], "session_flavor": "kurzer Satz"}`)
+	sb.WriteString(`{"learnings": [{"content": "...", "category": "...", "task_type": "task|idea|blocked|cap_idea", "entities": ["..."], "actions": ["..."], "keywords": ["..."], "anticipated_queries": ["Suchphrase 1", "Suchphrase 2"], "context": "Warum relevant", "status": "new|confirmed|revised|invalidated", "importance": 3, "emotional_intensity": 0.2}], "evaluations": [{"learning_id": N, "verdict": "...", "reason": "...", "action": "...", "impact_score": 0.0}], "contradictions": [{"learning_a": N, "learning_b": M, "description": "..."}], "session_flavor": "kurzer Satz"}`)
 
 	return sb.String()
 }

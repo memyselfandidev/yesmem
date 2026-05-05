@@ -400,7 +400,7 @@ func TestCleanProjectLocalSettings_NoProjectsNoPanic(t *testing.T) {
 
 func TestCleanClaudeJSON_RemovesYesmemSkillUsage(t *testing.T) {
 	home := t.TempDir()
-	claudeJSON := `{"mcpServers":{},"skillUsage":{"yesmem-sessions":{"usageCount":3},"yesmem-recall":{"usageCount":1},"commit":{"usageCount":5}},"numStartups":10}`
+	claudeJSON := `{"mcpServers":{},"skillUsage":{"yesmem-sessions":{"usageCount":3},"yesmem-search":{"usageCount":1},"commit":{"usageCount":5}},"numStartups":10}`
 	os.WriteFile(filepath.Join(home, ".claude.json"), []byte(claudeJSON), 0600)
 
 	cleanClaudeJSON(home)
@@ -415,8 +415,8 @@ func TestCleanClaudeJSON_RemovesYesmemSkillUsage(t *testing.T) {
 	if _, has := su["yesmem-sessions"]; has {
 		t.Fatal("yesmem-sessions should be removed")
 	}
-	if _, has := su["yesmem-recall"]; has {
-		t.Fatal("yesmem-recall should be removed")
+	if _, has := su["yesmem-search"]; has {
+		t.Fatal("yesmem-search should be removed")
 	}
 	if _, has := su["commit"]; !has {
 		t.Fatal("non-yesmem skill should be preserved")

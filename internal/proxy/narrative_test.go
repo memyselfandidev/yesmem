@@ -334,3 +334,44 @@ func TestRender_AllSystemReminderDecisionsFiltered(t *testing.T) {
 		t.Error("Key Decisions section should not appear when all decisions are filtered")
 	}
 }
+
+// TestIsNarrativeMessage_DoesNotMatchUserContentWithNarrativeSubstring guards
+// against the content-loss bug where a user message with narrative text as a
+// trailing fragment (e.g. from the now-removed WS1 tail-inject experiment, or
+// from any future accidental reintroduction) is fully stripped by
+// StripOldNarratives, wiping the user's actual input.
+func TestIsNarrativeMessage_DoesNotMatchUserContentWithNarrativeSubstring(t *testing.T) {
+	m := map[string]any{
+		"role":    "user",
+		"content": "hi how are you?\n\n<system-reminder>[yesmem-narrative]\nSession-Kontext (auto-generiert, Request 5):\nZiel: test\n</system-reminder>",
+	}
+	if isNarrativeMessage(m) {
+		t.Error("isNarrativeMessage must NOT match when narrative substring is embedded in real user content — that would cause StripOldNarratives to wipe the user message")
+	}
+}
+
+// TestIsNarrativeMessage_MatchesLegacyNarrativeOnlyMessage keeps the defensive
+// cleanup path alive for legacy sessions where narrative was injected as a
+// standalone user-role message whose content starts with the narrative marker.
+func TestIsNarrativeMessage_MatchesLegacyNarrativeOnlyMessage(t *testing.T) {
+	m := map[string]any{
+		"role":    "user",
+		"content": "Session-Kontext (auto-generiert, Request 5):\nZiel: test\n",
+	}
+	if !isNarrativeMessage(m) {
+		t.Error("isNarrativeMessage must still match legacy narrative-only user messages so StripOldNarratives can clean them")
+	}
+}
+
+// TestIsNarrativeMessage_MatchesLegacyNarrativeWithLeadingWhitespace covers the
+// case where the legacy narrative-only content starts with whitespace/newlines
+// before the marker — HasPrefix on trimmed text handles this.
+func TestIsNarrativeMessage_MatchesLegacyNarrativeWithLeadingWhitespace(t *testing.T) {
+	m := map[string]any{
+		"role":    "user",
+		"content": "\n\n  Session-Kontext (auto-generiert, Request 5):\nZiel: test\n",
+	}
+	if !isNarrativeMessage(m) {
+		t.Error("isNarrativeMessage must match narrative-only content even with leading whitespace")
+	}
+}

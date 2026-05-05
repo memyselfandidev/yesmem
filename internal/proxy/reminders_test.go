@@ -26,6 +26,28 @@ func TestStripReminders_KeepsLastMessage(t *testing.T) {
 	}
 }
 
+func TestStripReminders_ReplacesOldCapabilitiesActive(t *testing.T) {
+	msgs := []any{
+		map[string]any{"role": "system", "content": "system prompt"},
+		map[string]any{"role": "user", "content": "<system-reminder>\n<caps-active>\nregisterTool(\"git_log\", \"Show git log\", {}, async () => sh(\"git log\"));\n</caps-active>\n</system-reminder>\nhello world"},
+		map[string]any{"role": "assistant", "content": "hi"},
+		map[string]any{"role": "user", "content": "latest"},
+	}
+
+	result := StripReminders(msgs, 20)
+
+	content, _ := result[1].(map[string]any)["content"].(string)
+	if strings.Contains(content, "registerTool") {
+		t.Errorf("old caps-active reminder should be stripped (registerTool code gone), got: %q", content)
+	}
+	if !strings.Contains(content, "[caps-active]") {
+		t.Errorf("old caps-active should be replaced with keyword, got: %q", content)
+	}
+	if !strings.Contains(content, "hello world") {
+		t.Errorf("non-reminder content should be preserved, got: %q", content)
+	}
+}
+
 func TestStripReminders_ReplacesOldSkillCheck(t *testing.T) {
 	msgs := []any{
 		map[string]any{"role": "system", "content": "system prompt"},

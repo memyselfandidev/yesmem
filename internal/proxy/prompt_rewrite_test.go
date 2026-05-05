@@ -209,6 +209,111 @@ func TestInjectCLAUDEMDAuthority_AddsBlock(t *testing.T) {
 	}
 }
 
+// --- InjectToolPrefs ---
+
+func TestInjectToolPrefs_AddsBlock(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "You are Claude."},
+		},
+	}
+	InjectToolPrefs(req)
+	blocks := req["system"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	last := blocks[len(blocks)-1].(map[string]any)
+	text, _ := last["text"].(string)
+	if !strings.HasPrefix(text, "[yesmem-tool-prefs]") {
+		t.Errorf("block should be tagged yesmem-tool-prefs, got: %s", text[:min(50, len(text))])
+	}
+	for _, keyword := range []string{"Edit", "Write", "REPL", "soft-fail", "await Read", "file-tracker", "Agent", "TaskCreate"} {
+		if !strings.Contains(text, keyword) {
+			t.Errorf("tool-prefs block should mention %q", keyword)
+		}
+	}
+}
+
+// --- InjectOutputDiscipline ---
+
+func TestInjectOutputDiscipline_AddsBlock(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "You are Claude."},
+		},
+	}
+	InjectOutputDiscipline(req)
+	blocks := req["system"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	last := blocks[len(blocks)-1].(map[string]any)
+	text, _ := last["text"].(string)
+	if !strings.HasPrefix(text, "[yesmem-output-discipline]") {
+		t.Errorf("block should be tagged yesmem-output-discipline, got: %s", text[:min(50, len(text))])
+	}
+	for _, keyword := range []string{"preamble", "skill-eval", "exploratory", "set_plan", "timestamps", "msg:N"} {
+		if !strings.Contains(text, keyword) {
+			t.Errorf("output-discipline block should mention %q", keyword)
+		}
+	}
+}
+
+// --- InjectCodingDiscipline ---
+
+func TestInjectCodingDiscipline_AddsBlock(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "You are Claude."},
+		},
+	}
+	InjectCodingDiscipline(req)
+	blocks := req["system"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	last := blocks[len(blocks)-1].(map[string]any)
+	text, _ := last["text"].(string)
+	if !strings.HasPrefix(text, "[yesmem-coding-discipline]") {
+		t.Errorf("block should be tagged yesmem-coding-discipline, got: %s", text[:min(50, len(text))])
+	}
+	for _, keyword := range []string{"read", "AskUserQuestion", "half-finished", "browser", "TDD"} {
+		if !strings.Contains(text, keyword) {
+			t.Errorf("coding-discipline block should mention %q", keyword)
+		}
+	}
+}
+
+// Shared: all three new injects preserve existing blocks.
+func TestInjectDirectives_PreserveExistingBlocks(t *testing.T) {
+	injects := []func(map[string]any){
+		InjectToolPrefs,
+		InjectOutputDiscipline,
+		InjectCodingDiscipline,
+		InjectBeweislast,
+		InjectScopeDiscipline,
+		InjectDelegationContract,
+		InjectClarifyFirst,
+	}
+	for _, inject := range injects {
+		req := map[string]any{
+			"system": []any{
+				map[string]any{"type": "text", "text": "Block one."},
+				map[string]any{"type": "text", "text": "Block two."},
+			},
+		}
+		inject(req)
+		blocks := req["system"].([]any)
+		if len(blocks) != 3 {
+			t.Fatalf("expected 3 blocks after inject, got %d", len(blocks))
+		}
+		first := blocks[0].(map[string]any)["text"].(string)
+		if first != "Block one." {
+			t.Error("existing blocks should be preserved")
+		}
+	}
+}
+
 // --- InjectPersonaTone ---
 
 func TestInjectPersonaTone_Verbose(t *testing.T) {
@@ -618,5 +723,183 @@ func TestRewriteScopeMatching_ReturnsFalseWhenAbsent(t *testing.T) {
 	}
 	if RewriteScopeMatching(req) {
 		t.Error("expected false when text not present")
+	}
+}
+
+// --- InjectBeweislast ---
+
+func TestInjectBeweislast_AddsBlock(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "You are Claude."},
+		},
+	}
+
+	InjectBeweislast(req)
+
+	blocks := req["system"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	text, _ := blocks[1].(map[string]any)["text"].(string)
+	if !strings.HasPrefix(text, "[yesmem-beweislast]") {
+		t.Errorf("block should be tagged: %s", text)
+	}
+	for _, keyword := range []string{"Fabrication", "Claim-vs-proof", "Stance-under-challenge", "Tool-result-honesty", "Long-context-erosion", "Self-check", "mental self-check"} {
+		if !strings.Contains(text, keyword) {
+			t.Errorf("beweislast block should mention %q", keyword)
+		}
+	}
+}
+
+// --- InjectScopeDiscipline ---
+
+func TestInjectScopeDiscipline_AddsBlock(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "You are Claude."},
+		},
+	}
+
+	InjectScopeDiscipline(req)
+
+	blocks := req["system"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	text, _ := blocks[1].(map[string]any)["text"].(string)
+	if !strings.HasPrefix(text, "[yesmem-scope-discipline]") {
+		t.Errorf("block should be tagged: %s", text)
+	}
+	for _, keyword := range []string{"deliver A", "MUST be surfaced", "scope-drift", "Authorization covers doing"} {
+		if !strings.Contains(text, keyword) {
+			t.Errorf("scope-discipline block should mention %q", keyword)
+		}
+	}
+}
+
+// --- InjectDelegationContract ---
+
+func TestInjectDelegationContract_AddsBlock(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "You are Claude."},
+		},
+	}
+
+	InjectDelegationContract(req)
+
+	blocks := req["system"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	text, _ := blocks[1].(map[string]any)["text"].(string)
+	if !strings.HasPrefix(text, "[yesmem-delegation-contract]") {
+		t.Errorf("block should be tagged: %s", text)
+	}
+	for _, keyword := range []string{"self-contained", "goal in one sentence", "parallel dispatch", "Opus", "Sonnet", "Haiku", "structured outputs"} {
+		if !strings.Contains(text, keyword) {
+			t.Errorf("delegation-contract block should mention %q", keyword)
+		}
+	}
+}
+
+// --- InjectClarifyFirst ---
+
+func TestInjectClarifyFirst_AddsBlock(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "You are Claude."},
+		},
+	}
+
+	InjectClarifyFirst(req)
+
+	blocks := req["system"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	text, _ := blocks[1].(map[string]any)["text"].(string)
+	if !strings.HasPrefix(text, "[yesmem-clarify-first]") {
+		t.Errorf("block should be tagged: %s", text)
+	}
+	for _, keyword := range []string{"materially different work", "state your assumption", "fire-and-forget"} {
+		if !strings.Contains(text, keyword) {
+			t.Errorf("clarify-first block should mention %q", keyword)
+		}
+	}
+}
+
+// --- Idempotence: repeated inject must not duplicate blocks ---
+
+func TestInjectDirectives_Idempotent(t *testing.T) {
+	cases := []struct {
+		name string
+		tag  string
+		fn   func(map[string]any)
+	}{
+		{"AntDirectives", "yesmem-directives", InjectAntDirectives},
+		{"CLAUDEMDAuthority", "yesmem-enhance", InjectCLAUDEMDAuthority},
+		{"ToolPrefs", "yesmem-tool-prefs", InjectToolPrefs},
+		{"OutputDiscipline", "yesmem-output-discipline", InjectOutputDiscipline},
+		{"CodingDiscipline", "yesmem-coding-discipline", InjectCodingDiscipline},
+		{"Beweislast", "yesmem-beweislast", InjectBeweislast},
+		{"ScopeDiscipline", "yesmem-scope-discipline", InjectScopeDiscipline},
+		{"DelegationContract", "yesmem-delegation-contract", InjectDelegationContract},
+		{"ClarifyFirst", "yesmem-clarify-first", InjectClarifyFirst},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := map[string]any{
+				"system": []any{
+					map[string]any{"type": "text", "text": "You are Claude."},
+				},
+			}
+
+			tc.fn(req)
+			tc.fn(req)
+
+			blocks := req["system"].([]any)
+			if len(blocks) != 2 {
+				t.Fatalf("expected 2 blocks after 2 inject calls, got %d (duplicate injection)", len(blocks))
+			}
+			count := 0
+			prefix := "[" + tc.tag + "]"
+			for _, b := range blocks {
+				text, _ := b.(map[string]any)["text"].(string)
+				if strings.HasPrefix(text, prefix) {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Errorf("expected exactly one %s block, found %d", prefix, count)
+			}
+		})
+	}
+}
+
+func TestInjectPersonaTone_Idempotent(t *testing.T) {
+	req := map[string]any{
+		"system": []any{
+			map[string]any{"type": "text", "text": "You are Claude."},
+		},
+	}
+
+	InjectPersonaTone(req, "concise")
+	InjectPersonaTone(req, "concise")
+
+	blocks := req["system"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks after 2 inject calls, got %d", len(blocks))
+	}
+	count := 0
+	for _, b := range blocks {
+		text, _ := b.(map[string]any)["text"].(string)
+		if strings.HasPrefix(text, "[yesmem-tone]") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly one [yesmem-tone] block, found %d", count)
 	}
 }
