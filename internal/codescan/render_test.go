@@ -158,9 +158,10 @@ func TestRenderCodeMap_Large_SpecEbene1(t *testing.T) {
 		t.Errorf("should collapse remaining 2 packages with name-drops; got:\n%s", md[:500])
 	}
 
-	// Spec: NO LOC field (was buggy, not in spec)
-	if strings.Contains(md, "LOC") {
-		t.Error("should not contain LOC (not in spec)")
+	// Spec: NO LOC field as a table column (was buggy, not in spec).
+	// Prose mention of LOC in the briefing intro is allowed (describes packages.md content).
+	if strings.Contains(md, "| LOC ") || strings.Contains(md, " LOC |") {
+		t.Error("should not contain LOC table column (not in spec)")
 	}
 
 	t.Logf("Rendered code map:\n%s", md)
@@ -674,7 +675,7 @@ func TestRenderLarge_IncludesWikiLink(t *testing.T) {
 	for _, expect := range []string{
 		"Full code map:",
 		"~/.claude/yesmem/wiki/yesmem/",
-		"Browse `index.md`",
+		"Browse `packages.md`",
 		"search_code_index",
 	} {
 		if !strings.Contains(out, expect) {

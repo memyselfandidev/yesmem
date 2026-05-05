@@ -17,8 +17,8 @@ func TestRenderWikiLink_FileMissing(t *testing.T) {
 	if !strings.Contains(out, "not yet rendered") {
 		t.Errorf("missing 'not yet rendered' fallback in: %q", out)
 	}
-	if !strings.Contains(out, "Browse `index.md`") {
-		t.Errorf("missing index.md mention in: %q", out)
+	if !strings.Contains(out, "Browse `packages.md`") {
+		t.Errorf("missing packages.md mention in: %q", out)
 	}
 }
 

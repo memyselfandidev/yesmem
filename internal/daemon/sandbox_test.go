@@ -29,6 +29,9 @@ func TestSandbox_FallbackWhenMissing(t *testing.T) {
 		Enabled:             true,
 		FallbackUnsandboxed: true,
 	})
+	if sb.Available() {
+		t.Skip("ai-jail is installed or was auto-downloaded; cannot exercise fallback path")
+	}
 	output, exitCode, err := sb.Run("echo fallback-works", 10)
 	if err != nil {
 		t.Fatalf("run: %v", err)
