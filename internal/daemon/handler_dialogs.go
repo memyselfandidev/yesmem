@@ -255,8 +255,10 @@ func (h *Handler) handleEndDialog(params map[string]any) Response {
 	return jsonResponse(map[string]any{"status": "ended", "dialog_id": dialogID})
 }
 
-// handleRegisterPID stores the OS PID of a Claude Code process for stdin injection.
-// Also updates activeSessionID so MCP tools can resolve the sender.
+// handleRegisterPID stores the OS PID of a Claude Code / OpenCode process for
+// MCP tool session resolution. Also updates activeSessionID so MCP tools can
+// resolve the sender. Non-Claude agents can pass source_agent to persist their
+// identity for briefing generation.
 func (h *Handler) handleRegisterPID(params map[string]any) Response {
 	sessionID, _ := params["session_id"].(string)
 	pid, _ := params["pid"].(float64)
@@ -271,6 +273,11 @@ func (h *Handler) handleRegisterPID(params map[string]any) Response {
 	h.activeSessionMu.Lock()
 	h.activeSessionID = sessionID
 	h.activeSessionMu.Unlock()
+
+	// Persist source_agent for non-Claude agents so briefings identify correctly
+	if sa, _ := params["source_agent"].(string); sa != "" {
+		_ = h.store.SetProxyState("source_agent:"+sessionID, sa)
+	}
 
 	return jsonResponse(map[string]any{"status": "ok"})
 }

@@ -29,6 +29,8 @@ deploy: build
 	cp $(BINARY) $(INSTALL_NEW)
 	mv -f $(INSTALL_NEW) $(INSTALL)
 	cp scripts/injector.js $(HOME)/.claude/yesmem/injector.js
+	mkdir -p $(HOME)/.local/share/yesmem/plugins/opencode-yesmem
+	cp plugins/opencode-yesmem/*.ts plugins/opencode-yesmem/package.json $(HOME)/.local/share/yesmem/plugins/opencode-yesmem/
 	$(MAKE) restart-services
 	@echo "deployed $(VERSION) → $(INSTALL)"
 

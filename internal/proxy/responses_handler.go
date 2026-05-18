@@ -50,8 +50,24 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := s.prepareOpenAIRequestContext(anthReq, reqIdx, r.Header.Get("X-Claude-Code-Session-Id"), r.Header.Get("User-Agent"))
-	s.runOpenAIParityPipeline(anthReq, &ctx)
+	ocSessionID := r.Header.Get("x-opencode-session")
+	if ocSessionID == "" {
+		ocSessionID = r.Header.Get("x-session-affinity")
+	}
+	if ocSessionID != "" {
+		s.logger.Printf("[req %d] %sopencode session=%s%s", reqIdx, colorGreen, ocSessionID, colorReset)
+	}
+	ctx := s.prepareOpenAIRequestContext(anthReq, reqIdx, r.Header.Get("X-Claude-Code-Session-Id"), ocSessionID, r.Header.Get("User-Agent"))
+	ctx.Model = model
+
+	// Non-interactive requests (CLI tools, extraction pipeline) have no session headers.
+	// Skip the entire proxy pipeline — no MCP calls, no associative context, no system blocks.
+	headerClaudeSession := r.Header.Get("X-Claude-Code-Session-Id")
+	if ocSessionID == "" && headerClaudeSession == "" {
+		s.logger.Printf("[req %d] non-interactive request — skipping proxy pipeline", reqIdx)
+	} else {
+		s.runOpenAIParityPipeline(anthReq, &ctx)
+	}
 
 	outReq, err := translateAnthropicToResponses(anthReq)
 	if err != nil {

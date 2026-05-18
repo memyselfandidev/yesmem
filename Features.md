@@ -451,6 +451,16 @@ Early versions wrote Sackgassen, Patterns, Preferences, and Open Tasks directly 
 
 Triggered by `GenerateAllMemoryMDs()` via CLI commands (`yesmem claudemd`). Note: The `OnMutation` callback in the daemon handler is defined but not wired — runtime auto-generation does not currently happen.
 
+### 5b. AGENTS.md Auto-Generation
+
+For opencode users, yesmem generates `AGENTS.md` — an opencode-specific instruction file (`yesmem claudemd --opencode`). While MEMORY.md is Claude Code's project instruction file with condensed learnings, AGENTS.md is the opencode equivalent with:
+
+- **Tool preference directives** — instructions to use yesmem MCP tools (search, learnings, wiki) before raw grep/cat/find
+- **OpenCode-relevant structural info** — project name, session history summary, open tasks, wiki path
+- **Same database** — AGENTS.md is generated from the same yesmem.db learnings as MEMORY.md, just formatted for opencode's tool and instruction structure
+
+Generated at `CLAUDE.md` location (since opencode reuses the Claude Code convention), or alongside the project root's existing `CLAUDE.md`.
+
 ---
 
 ## 6. Persona Engine
@@ -757,21 +767,50 @@ proxy:
 
 Runtime override per model via MCP: `set_config(key="token_threshold", value="opus=500000")`.
 
-### OpenAI Parity Pipeline (Codex Support)
+### OpenAI Parity Pipeline (Codex & OpenCode Support)
 
-The proxy also handles OpenAI Responses API requests (used by Codex CLI):
+The proxy handles both Anthropic Messages API requests (Claude Code) and OpenAI Responses API requests (Codex CLI, opencode) through a single binary. For non-Anthropic requests, a parallel pipeline translates between API formats and applies the same compression, injection, and caching logic.
 
+**Request flow:**
 ```
-Codex CLI → POST /v1/responses → yesmem proxy → translate to Messages API → Anthropic → translate back to Responses API → Codex CLI
+Codex/Opencode → POST /v1/responses → yesmem proxy
+  → translate to Anthropic Messages API format
+    → run same compression pipeline (stubbing, collapse, sawtooth)
+    → inject briefing, associative context, directives (profile-aware)
+    → translate back to OpenAI Responses API format
+  → forward to api.deepseek.com (or configured provider)
+    → translate response back to Responses API format
+  → Codex/Opencode
 ```
 
-**Translation layer:**
-- Incoming Responses API requests → converted to Anthropic Messages API format
-- Outgoing Anthropic responses → converted back to Responses API format
-- Full compression pipeline (stubbing, collapse, Sawtooth) works on both paths
-- Briefing + associative context injection for Codex sessions
-- CWD extracted from Codex `<cwd>` tags for project-aware briefing
-- ThreadID uses stable `session_id` from metadata (not content hash)
+**Translation layer** (`internal/proxy/openai_reverse.go`):
+- Incoming Responses API `input[]` blocks → Anthropic `messages[]` (user/assistant/tool roles)
+- Outgoing Anthropic streaming SSE events → Responses API `output[]` blocks
+- `cache_control` breakpoints are translated through both directions — preserving DeepSeek prompt cache across the round-trip
+- ThreadID detection: uses stable `session_id` from request metadata, not content hash. Falls back to SHA256 of user_id when metadata is absent.
+
+**Injection pipeline** (`internal/proxy/openai_parity.go`):
+
+The parity pipeline runs the same injection sequence as the main proxy pipeline, but with profile-aware gating (§19):
+- `InjectAntDirectives` → discipline blocks (verification, collaboration)
+- `InjectOutputDiscipline` — uses `InjectDeepSeekOutputDiscipline` for DeepSeek models (relaxed brevity, retains structural guidance)
+- `InjectCodingDiscipline` / `InjectBeweislast` / `InjectScopeDiscipline`
+- `InjectClarifyFirst` / `InjectCodeToolsFirst` / `InjectWikiFirst`
+- `InjectTimestamps` → wall-clock timestamps and message sequence numbers (same as §12c)
+- Claude-specific injectors (`InjectClaudeToolPrefs`, `InjectDelegationContract`) are **excluded** from the parity path via profile gating
+- `injectOpencodeCapabilitiesCatalog` → registers active caps as available tools (§25)
+
+**Cache management for DeepSeek:**
+- **Stable injection position:** All prompt injections are placed early and consistently — variable blocks at `system[0]`, deterministic blocks appended to the last user message. This prevents cache fragmentation from injection position drift.
+- **`cache_control` passthrough:** Anthropic-format `cache_control` breakpoints are translated into the OpenAI format and back — DeepSeek's prompt cache receives the same prefix structure.
+- **TTL normalization:** On session resume, all breakpoint TTLs are normalized to a consistent value to prevent cache-ordering constraint violations.
+- **Subagent isolation:** opencode subagents get their own cache namespace (threadID suffix) to prevent cache collisions with the parent session.
+- **Fork effort=high normalization:** Forked extraction calls force `effort="high"` because DeepSeek returns HTTP 400 on `effort="xhigh"`.
+
+**Session identity:**
+- `source_agent` is detected from working directory patterns and request metadata
+- `YESMEM_SOURCE_AGENT=opencode` is injected by the plugin into shell environments (§10b)
+- Session IDs are prefixed by source: `opencode:...` for opencode, `codex:...` for Codex, bare UUID for Claude
 
 ---
 
@@ -985,6 +1024,101 @@ YesMem detects repeating tool-use patterns across conversation turns and suggest
 
 ---
 
+## 10b. opencode-yesmem Hook Plugin
+
+YesMem ships a TypeScript/Bun hook plugin (`plugins/opencode-yesmem/`) that integrates directly with opencode's plugin API. Unlike the bash-based hook system for Claude Code (§10), this plugin hooks into opencode's own event system for tool-call interception, session lifecycle, and user message capture.
+
+### Installation
+
+The plugin is embedded in the yesmem binary via `go:embed` (`plugins/embed.go`). During `yesmem setup`, it is installed to `~/.local/share/yesmem/plugins/opencode-yesmem/` and registered in `opencode.json`. A Unix socket RPC layer (`rpc.ts`) forwards all tool calls to the yesmem daemon via `~/.claude/yesmem/daemon.sock`.
+
+### Five Hooks
+
+The plugin registers five hooks into opencode's event system:
+
+| Hook | opencode Event | Purpose |
+|------|---------------|---------|
+| **code_nav** | `tool.execute.before` | Blocks `grep`, `cat`, `find`, `sed`, `rg` etc. when the target file is indexed in the CBM code graph. Suggests MCP code tools instead. Dismissable per session (5 dismissals max). |
+| **rule_guard** | `tool.execute.before` + `tool.execute.after` | Evaluates every tool call against `RULES.md` + Skill-Catalog via DeepSeek. BLOCK throws to prevent the tool call; SUGGEST injects a directive via `tool.execute.after`; PASS lets it through. (See §10c below for full detail.) |
+| **failure_learn** | `tool.execute.after` | Detects failed Bash commands and forwards them to the daemon for gotcha extraction — the same auto-learning loop as `hook-failure` in the Claude Code hooks. |
+| **auto_resolve** | `tool.execute.after` | Watches for git commit messages and auto-resolves matching open tasks via `resolve_by_text()`. |
+| **idle_reminder** | Periodic (plugin-internal timer) | After configurable idle periods, injects a YesMem usage reminder (search your memory, check open tasks, update the plan). |
+
+### Shell Environment
+
+The plugin injects `YESMEM_SOCKET` (pointing to `daemon.sock`) and `YESMEM_SOURCE_AGENT=opencode` into every shell environment. This enables the bash-polyfill layer for cap scripts (see §25) and ensures the daemon can attribute sessions to the correct source agent.
+
+### Session Lifecycle
+
+On `session.created`, the plugin registers the session with the daemon via `register_pid` RPC — mapping the opencode session ID to the yesmem PID-session infrastructure. This enables:
+- Agent-to-agent messaging (send_to, broadcast) for opencode sessions
+- Session identity resolution via PID reverse-lookup
+- Briefing injection by the proxy (which handles opencode parity requests)
+
+At startup, the plugin triggers a one-shot code scan (calling `search_code_index` with a dummy pattern) so the CBM code graph is warm before the first user prompt — eliminating cold-start latency for code_nav.
+
+### Architecture
+
+```
+opencode session
+  → opencode-yesmem plugin (TypeScript/Bun)
+    → rpc.ts (Unix socket to daemon.sock)
+      → yesmem daemon (Go)
+        → RPC handlers (search_code_index, register_pid, store_learning, etc.)
+```
+
+The plugin contains no business logic — it intercepts opencode events, normalizes them into RPC calls, and injects the daemon's responses back into opencode's output. All intelligence (search, code graph, learning storage, rule evaluation) lives in the Go daemon — the plugin is a thin integration layer, exactly like the MCP server.
+
+### 10c. rule_guard — DeepSeek-Based Tool-Call Compliance
+
+The `rule_guard` hook is the plugin's largest and most iterated component (~30 commits just for format tuning). It evaluates every tool call against the project's `RULES.md` and YAML Skill-Catalog using DeepSeek, then decides whether to block, suggest, or pass the call.
+
+#### How it works
+
+1. **Rule loading** — At startup, `loadRules()` reads `RULES.md` from the project root. It extracts numbered rules plus the `## Skill Catalog` section (containing skill activation triggers in YAML format). This combined text is the evaluation context.
+
+2. **DeepSeek evaluation** — On every `tool.execute.before` event, the guard sends the tool name + input + rules context to DeepSeek (`deepseek-chat` model, non-streaming). The LLM returns a structured decision: `BLOCK`, `SUGGEST`, or `PASS` with an explanation.
+
+3. **BLOCK** — The tool call is prevented via `throw new Error(...)`. Used for rule violations that would cause data loss, commit pollution, or security issues. The error message includes the violated rule number and a directive (e.g. "Fix the source learning instead of editing yesmem-ops.md").
+
+4. **SUGGEST** — The tool call proceeds, but a deferred directive is injected via `tool.execute.after`. The output prefix contains `[rule_guard] MANDATORY CHECK: activate <skill-name> — ...` with a call-to-action. Used when the agent should have activated a skill before acting (e.g. bash call before memory search).
+
+5. **PASS** — No action; the tool call proceeds normally.
+
+#### Exemptions
+
+Certain tools and operations bypass the guard entirely via a `skipTools` Set:
+
+- **`bash` calls** — Pre-filtered as SUGGEST-only (never BLOCKed). The mandatory memory-search rule means bash calls get the search-before-execute reminder, not a hard wall.
+- **Edits to `RULES.md` or `DECISIONS.md`** — Exempt to prevent the guard from blocking its own maintenance.
+- **Internal yesmem files** — Write/Edit on files inside `~/.claude/yesmem/` pass through (these are yesmem's own storage, not user code).
+
+#### Format Iteration
+
+The guard's output format went through ~30 iterations across May 12 before stabilizing. The key constraint: opencode's plugin API behaves differently per hook phase and per tool type.
+
+| Attempt | Problem | Final |
+|---------|---------|-------|
+| `throw Error` for BLOCK | Generic, no rule context | ✅ Throw with `[rule_guard] BLOCKED: <reason>` |
+| `output.block` for BLOCK | Silent, agent didn't learn | ❌ Abandoned |
+| `output.args` mutation for Write/Edit | Doesn't work — args are read-only after the before-phase | ❌ Abandoned |
+| `tool.execute.after` for SUGGEST | Clean output, doesn't block the tool | ✅ Active |
+| `chat.message` append for context | Invalid — OC 1.14.49 doesn't expose text in chat.message | ❌ Abandoned |
+| Toast-only for BLOCK | User missed the toast, agent proceeded unaware | ❌ Abandoned |
+
+The final stable configuration:
+- `tool.execute.before` → throw for BLOCK (hard stop)
+- `tool.execute.after` → output prefix for SUGGEST (non-blocking directive)
+- `experimental.chat.messages.transform` → capture last user message for context (the only hook in OC 1.14.49 that delivers raw user text)
+- `chat.params` → fallback user-message capture when `messages.transform` is unavailable
+- All logging goes to `~/.claude/yesmem/logs/plugin.log` via `dbgLog()` (never `console.*` — that corrupts opencode's TUI)
+
+#### API Key Resolution
+
+The guard resolves its DeepSeek API key from `~/.local/share/opencode/auth.json` (`auth.deepseek.key`). This is the same key opencode uses for DeepSeek models — no separate configuration needed.
+
+---
+
 ## 11. Cognitive Signals & Reflection
 
 An async feedback loop that lets the system evaluate its own context injections.
@@ -1146,6 +1280,51 @@ Claude drifts from CLAUDE.md instructions in long sessions because they sit at t
 - **Token budget:** ~3-7k chars condensed (proportional to CLAUDE.md size) × max 4-5 blocks = ~5-15k tokens
 - **QualityClient** (Sonnet by default) — initialized at daemon startup, wired to Handler for on-demand condensation
 - Replaces deprecated `yesmem-ops.md` generator (Section 12 old)
+
+### 12a. RULES.md — Project-Level Agent Policy
+
+While §12 injects condensed CLAUDE.md rules into long sessions, the `RULES.md` file at the project root serves a different purpose: it is the **source of truth for the rule_guard plugin** (§10c). It defines constraints and behavioral rules that are evaluated against every tool call, not just periodically re-injected as context.
+
+**Structure:**
+
+`RULES.md` contains two sections:
+
+1. **Numbered Rules** — Behavioural constraints in imperative form. Examples: "Never auto-commit" (Rule 1), "ALWAYS search memory before answering" (Rule 19), "Check for relevant Skill before acting" (Rule 23). The rule_guard extracts only the numbered lines for DeepSeek evaluation.
+
+2. **Skill Catalog** — YAML-formatted skill definitions with `activation` conditions and `trigger` keywords. When the guard detects a tool call that matches a skill's activation pattern, it suggests activating that skill.
+
+```yaml
+## Skill Catalog
+
+- skill: yesmem-search
+  activation: "ALWAYS before answering questions about past work, architecture, prior decisions, or before proposing fixes"
+  trigger: "past work | architecture questions | prior decisions | proposing fixes | unfamiliar components"
+
+- skill: yesmem-orientation
+  activation: "At session start, when switching projects, returning after a break, or when disoriented about project state"
+  trigger: "where were we | what's open | wo waren wir | returning after break"
+
+- skill: brainstorming
+  activation: "BEFORE any creative work — creating features, building components, adding functionality"
+  trigger: "create | build | add feature | implement | design"
+```
+
+**Lifecycle:**
+
+- **Created** — Initially authored as `DECISIONS.md`, renamed to `RULES.md` on May 13 (semantic accuracy: Rules, not Decisions)
+- **Loaded by rule_guard** — The plugin reads `RULES.md` from the project root at startup. Skills section is parsed as YAML; rules section is extracted as numbered lines.
+- **Evaluated** — On every tool call, the guard sends the rules + skill catalog to DeepSeek for a PASS/BLOCK/SUGGEST decision
+- **Auto-Refresh** — The file is fsnotify-watched. On change (30s debounce), the guard reloads it
+- **Default rules** — The mandatory memory-search rule (Rule 19) and skill-activation rule (Rule 23) are hard-coded defaults; violation produces a SUGGEST directive even on projects without a local `RULES.md`
+
+**Relationship to CLAUDE.md:**
+
+| | CLAUDE.md | RULES.md |
+|---|---|---|
+| **Purpose** | Instructions for the agent's behaviour (coding style, conventions, project context) | Hard policy constraints for tool-call compliance |
+| **Consumer** | Loaded by Claude Code / opencode as system context; condensed and re-injected by proxy (§12) | Evaluated by rule_guard plugin (§10c) via DeepSeek |
+| **Enforcement** | Advisory (loses attention weight over long sessions → re-injection needed) | Enforced per tool call (BLOCK/SUGGEST/PASS) |
+| **Format** | Free-form Markdown with code blocks, references, tables | Numbered rules + YAML skill catalog
 
 ---
 
@@ -1481,14 +1660,31 @@ The Code Map is injected as its own assistant turn, separate from the briefing, 
 
 ### 18.5 Code Navigation Hook
 
-A `PreToolUse` hook (`hook-check`) detects when REPL commands target indexed files (via `cat()`, `grep`, or similar). When triggered, it suggests using MCP code tools instead:
+The code-navigation hook prevents agents from reaching for shell tools when the target file is already indexed in the CBM code graph. If the code graph has the file, shell-based navigation (grep/cat/find/sed/rg) is unnecessary — code tools are faster and provide richer context (callers, symbols, co-edits, gotchas).
+
+**Implementation (opencode plugin):**
+
+The `code_nav` hook in the `opencode-yesmem` plugin (§10b) fires on `tool.execute.before`. It checks whether the target path exists in the code graph via the `search_code_index` RPC. If the file is indexed, it throws with a directive:
 
 ```
-yesmem has indexed this file. Use MCP tools instead of shell navigation:
-  get_file_symbols(file) for symbol overview, then get_code_snippet for targeted ranges
+[code-nav] yesmem has indexed this path. Navigate with MCP tools:
+  get_file_symbols(file) for symbol overview, get_code_snippet for targeted ranges,
+  graph_traverse for call paths — no grep/cat/find needed.
 ```
 
-The suggestion can be dismissed per-session via `dismiss_code_nav(session_id)`. After 5 dismissals in a session, suggestions stop until the next session.
+**Dismissal:**
+
+The suggestion can be dismissed per-session via `dismiss_code_nav(session_id)`. Up to 5 dismissals per session; after 5, code_nav stops suggesting for the remainder of the session. Dismissal is permanent for that session only — the next session starts fresh.
+
+**Legacy support (Claude Code):**
+
+For Claude Code sessions (which don't run the opencode plugin), the older `hook-check` PreToolUse hook detects shell commands (`cat()`, `grep`) on indexed paths and suggests MCP code tools. Same behavior, different integration layer.
+
+**Impact:**
+
+- Paths inside `/yesmem/` are silently excluded from indexing (guards against indexing yesmem's own internal files)
+- The code graph tracks which sessions touched which files (`yesmem_related_to_file`)
+- CBM scanner re-parses only when the git working tree changes (cached `CodeGraph`)
 
 ### 18.6 Worktree Awareness
 
@@ -1497,6 +1693,57 @@ The project key for code indexing is derived from the git repository root (`git 
 - Worktrees of the same repository share the same code index
 - Scanning in one worktree updates the index for all sessions in that repo
 - The project key remains stable regardless of subdirectory navigation
+
+### 18.7 Wiki Export — Rendered Knowledge Base
+
+The daemon periodically renders all YesMem learnings, sessions, files, and code intelligence data into a browsable, pure-Markdown wiki at `~/.claude/yesmem/wiki/<project>/`. This gives agents (and humans) a static, always-available entry point into the accumulated knowledge of a project — without needing the daemon to be running, and without any MCP tool calls.
+
+#### What Gets Rendered
+
+| Page | Content |
+|------|---------|
+| `index.md` | Full file tree with per-file annotations (gotchas, TODOs, session count, last touched) |
+| `packages.md` | Package-level overview: file counts, gotchas, TODOs, package descriptions from CLAUDE.md |
+| `learnings.md` | All active learnings grouped by category with metadata (source, use_count, stability, agent_role, session_id) |
+| `learnings/<ID>.md` | Individual learning detail pages with full content, entities, actions, keywords, supersede chain history |
+| `files/<path>.md` | Per-file deep-dives: top-level symbols with line numbers, imports, co-edited files, related learnings, recent sessions that touched the file |
+| `packages/<pkg>.md` | Per-package aggregation: all files in the package, combined symbols, change coupling |
+| `topics/<name>.md` | Topic clusters — semantically related learnings grouped by agglomerative embedding clustering |
+| `sessions/<id>.md` | Session summaries with narrative handovers, commit references, and extracted learnings |
+| `health.md` | Code health overview: test coverage ratios, file counts, package list |
+| `README.md` | Project portrait with recent sessions, learnings count, package count |
+
+#### Refresh Cycle
+
+- **wiki-tick:** The daemon runs a 5-minute ticker (`startWikiTicker`). On each tick, it iterates over all active projects and checks whether the wiki needs re-rendering.
+- **Change detection:** A snapshot file (`wiki_snapshot.json`) tracks `max(updated_at)` of active learnings and `max(at)` of sessions. If nothing changed since the last render, the tick skips that project entirely — zero I/O, zero CPU.
+- **Content-hash write-skip:** Each output file's SHA256 hash is compared against the existing file on disk. Files whose content hasn't changed are skipped — only genuinely updated pages trigger disk writes.
+- **Code graph caching:** The codescan result is cached per project via `CachedScanner`. If the git working tree hasn't changed since the last scan, the scanner returns the cached `CodeGraph` — avoiding a full TreeSitter re-parse.
+
+#### Performance
+
+- **Parallel queries:** The `loadAll` phase runs database queries for learnings, sessions, entities, and files concurrently via goroutines + `sync.WaitGroup`.
+- **Result:** Wiki rendering went from **36 seconds** (sequential queries, no caching, full writes every tick) to **under 1 second** on the main yesmem project (400+ rendered files) — a ~36× improvement across three commits: parallelization, content-hash skip, and code graph caching.
+- **Phase timing:** Each render logs per-phase timing: load, compute, template execution, and write — making regressions immediately visible in the daemon log.
+
+#### Integration with Code Map
+
+The code map (see §18.4) includes a wiki link at the top of every code map injection: the wiki path, the last build timestamp, and a "BEFORE editing any file, check its wiki page" directive. The wiki is the browsable backup of the code graph — the code map is the summary; the wiki is the reference library.
+
+The `[yesmem-wiki-first]` system block (injected by the proxy) reinforces this: agents are instructed to check the wiki for per-file gotchas and learnings before editing any file. Falls back to `search_code_index` / `get_code_snippet` / raw grep when wiki pages don't yet exist for a file.
+
+#### CLI Access
+
+```bash
+# Trigger a one-shot wiki render for the current project
+yesmem wiki-export --project yesmem
+
+# View the rendered wiki in a browser or file viewer
+ls ~/.claude/yesmem/wiki/yesmem/
+cat ~/.claude/yesmem/wiki/yesmem/index.md
+```
+
+The wiki is also available as a bundled capability (`wiki_export` cap) for scheduled or on-demand rendering outside the 5-minute tick cycle.
 
 ---
 
@@ -1541,6 +1788,65 @@ When the user chooses `provider: api`, the setup wizard handles Claude Code's tr
 - **Pre-install state:** `install-state.json` saves `oauthAccount`, `primaryApiKey`, `envAPIKey`, and `autoCompactEnabled` before any changes.
 - **Uninstall restore:** `restorePrimaryApiKeyFromState()` restores both `oauthAccount` and `primaryApiKey` to `~/.claude.json`, returning the user to their pre-YesMem auth state.
 - **Cache-TTL hint:** Wizard explains why a platform.claude.com key is needed (1-hour prompt caching vs 5-minute ephemeral).
+
+### Multi-Agent Prompt Isolation (PromptProfile)
+
+YesMem supports multiple LLM agent frontends — Claude Code, opencode, and Codex CLI — each with different system prompt requirements, tool preferences, and behavioral constraints. The `PromptProfile` system ensures each agent type receives only the prompt directives that apply to it, without cross-contamination.
+
+**PromptProfile Type** (`internal/models/prompt_profile.go`):
+
+Three profiles are defined:
+| Profile | Agent Frontend | Detection |
+|---------|---------------|-----------|
+| `claude` | Claude Code | Default; `source_agent=claude` |
+| `opencode` | opencode | Detected from path patterns (`opencode` in working directory) |
+| `codex` | OpenAI Codex CLI | Detected from path patterns; receives OpenAI parity pipeline |
+
+**PromptFlags** (`internal/config/config.go`):
+
+Each prompt directive is modeled as a boolean flag in a shared `PromptFlags` struct:
+
+```yaml
+# config.yaml
+shared_prompt:           # Agent-neutral defaults (applied to all profiles)
+  prompt_output_discipline: true
+  prompt_coding_discipline: true
+  prompt_beweislast: true
+  prompt_scope_discipline: true
+
+claude_prompt:           # Claude-specific overrides
+  prompt_tool_prefs: true      # REPL tool guidance
+  prompt_code_tools_first: true
+  prompt_wiki_first: true
+
+codex_prompt:            # Codex-specific
+  prompt_code_tools_first: true
+  prompt_wiki_first: true
+
+model_features:          # Per-model injection gating
+  claude-opus-4-6: { prompt_ungate: true, ... }
+  claude-haiku-4-5: { prompt_ungate: false, prompt_coding_discipline: false, ... }
+```
+
+**EffectivePromptFlags(profile) — Three-Layer Merge:**
+
+The proxy resolves the effective prompt flags for each request by merging three layers (last wins):
+
+1. **Hard defaults** — agent-neutral flags enabled by default in `Default()`
+2. **`shared_prompt`** — base layer for all profiles
+3. **Profile-specific** — `claude_prompt`, `codex_prompt`, or `opencode_prompt` in config.yaml
+4. **Legacy flat fields** (backward compatibility) — deprecated `proxy.prompt_code_tools_first` etc. mapped via `claudeLegacyFlags()`
+
+**Profile-aware injector gating** (`internal/proxy/`):
+
+The proxy calls `getPromptFlags(profile)` to resolve flags per request. In the main Anthropic pipeline (`handleMessages`), flags are resolved for `ProfileClaude`. In the OpenAI parity pipeline (`runOpenAIParityPipeline`), flags are resolved for `ProfilesCodex` or `ProfileOpencode`. This ensures:
+- Claude-specific directives (REPL tool preferences, Opus/Sonnet/Haiku guidance) never leak into opencode/Codex prompts
+- Codex/openCode sessions receive only agent-neutral injectors
+- Each agent type can independently toggle prompt rewrites, discipline blocks, and tool guidance
+
+**Feature defaults** (`feature_defaults`):
+
+New models automatically inherit the full feature set (`all-true`). Only models that need reduced prompting (e.g. Haiku for forked extraction) are explicitly downgraded in `model_features`. This prevents the config from growing with every new model release.
 
 ### Extraction across providers
 
@@ -1764,6 +2070,8 @@ Large tool results (exceeding `maxResultSizeChars`, default 30K) include a `_met
 | `deactivate_cap` | `name` | Deactivate a cap for the current thread |
 | `register_caps` | `project?`, `tag?` | Generate registerTool() JS code for saved caps |
 | `cap_store` | `capability`, `action`, `table?`, `columns?`, `data?`, `where?`, `args?`, `limit?` | Structured data tables for capabilities (create_table, upsert, query, delete, list_tables) |
+| `execute_cap` | `name`, `fn?`, `args?` | Execute a saved CAP handler. The daemon runs the handler sandboxed (bun for JS, bash for shell) and returns the result as JSON |
+| `cap_proposal_decide` | `id`, `decision`, `notes?` | Accept or reject an auto-correct cap proposal. On accept, the proposed bash body is applied to the active cap. On reject, the proposal transitions to rejected state |
 
 ### Learning Metadata
 | Tool | Parameters | Description |
@@ -2471,7 +2779,31 @@ The two paths together mean: after editing a bundled cap, run `make deploy` firs
 
 Full schema in `yesdocs/architecture/db-schema.md`.
 
-### Spec & Builder Skill
+### Bash Polyfills for Caps
+
+Cap scripts declared with `runtime: bash` execute in the daemon's sandboxed environment — they don't have access to the Claude Code REPL or MCP tools. YesMem provides two polyfill functions that bridge this gap via Unix socket RPC to the daemon:
+
+**`store()` — Key-Value Persistence**
+
+```bash
+store mykey "my value"
+```
+
+Writes a key-value pair directly to `caps.db` via the `cap_store` RPC. No round-trip through the MCP server needed. Used by cap handlers that need to persist state between invocations (e.g. Telegram last-read-message cursor, RSS last-fetch timestamp).
+
+**`llm()` — LLM Completion**
+
+```bash
+result=$(llm "summarize this text: $long_text" --model haiku --max-tokens 500)
+```
+
+Calls the daemon's `llm_complete` RPC with the configured quality model. Supports:
+- `--model <tier>` — `haiku`, `sonnet`, or `opus` (resolved per provider)
+- `--max-tokens <N>` — output token limit
+- Session-resume — subsequent calls in the same bash job reuse the prompt cache
+- Provider-aware — works with Anthropic, DeepSeek, and OpenAI providers via the standard LLM provider routing
+
+Both polyfills are defined in `internal/daemon/handler_cap_exec.go` and injected into the AI-jail environment via the bun wrapper. They make bash caps functionally equivalent to REPL caps — the same scripts work identically under Claude Code (REPL VM), opencode (bun MCP wrapper), and the CLI (direct daemon execution).
 
 Cap-Spec v1.1 lives in the sibling project `~/projects/cap-spec`. The `yesmem-cap-builder` bundled skill (336-line `SKILL.md` + recipes, api-reference, gotchas side-files) is the canonical reference for landing a working cap in one pass — it covers the REPL VM allowlist, the `sh` 30 KB wall, `sanitize_where`, schema rules, the bundled-cap DB write-back lifecycle (including pre-commit version sync), and the jq label/apostrophe quirks.
 
@@ -2651,6 +2983,8 @@ A heartbeat-driven error handler (1 s tick, down from 2 s) processes failed runs
 3. **Substantial path** — writes the proposal as a `learnings.cap_proposed` row; user reviews and accepts/rejects via the `cap_proposal_decide` MCP tool.
 4. **Rate-limits** — T4 caps the per-cap auto-correct retry budget; T5 blocks runaway re-fires when the same script fails N times in a row.
 5. **Sandbox-aware** — fails closed when the configured sandbox profile is unavailable instead of silently downgrading to unsandboxed execution.
+
+**Cap consolidation pattern:** Poll-and-reply caps (e.g. Telegram) run both polling and replying in a single Bash script via a deadline-loop: `poll(), reply(), retry if more data, exit at deadline`. This avoids spawning separate headless agents per incoming message and keeps state closures within the same AI-jail process for the full fire interval.
 
 Each bash run is persisted in `bash_job_runs` (CRUD via `internal/storage/bash_run.go`) with stdout/stderr; both streams are routed through `SanitizingClient` when secret redaction is enabled, so credentials accidentally echoed by a script never reach the durable log.
 

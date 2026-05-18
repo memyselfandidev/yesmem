@@ -35,6 +35,8 @@ func Uninstall() error {
 	fmt.Println("  ✓ .mcp.json entries")
 	fmt.Println("  ✓ Codex provider + MCP entries in ~/.codex/config.toml")
 	fmt.Println("  ✓ Codex instructions (~/.codex/instructions/yesmem.md)")
+	fmt.Println("  ✓ Opencode plugin (~/.config/opencode/plugins/yesmem.ts)")
+	fmt.Println("  ✓ Opencode settings (provider, MCP, compaction in opencode.json)")
 	if runtime.GOOS == "linux" {
 		fmt.Println("  ✓ systemd user services (daemon + proxy)")
 	} else if runtime.GOOS == "darwin" {
@@ -100,6 +102,13 @@ func Uninstall() error {
 
 	fmt.Print("  Cleaning Codex config... ")
 	if err := removeCodexSetup(home); err != nil {
+		fmt.Printf("⚠ %v\n", err)
+	} else {
+		fmt.Println("✓")
+	}
+
+	fmt.Print("  Cleaning Opencode config... ")
+	if err := removeOpencodePlugin(home); err != nil {
 		fmt.Printf("⚠ %v\n", err)
 	} else {
 		fmt.Println("✓")

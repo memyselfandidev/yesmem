@@ -38,7 +38,8 @@ func runProxy() {
 		TokenThresholds:       cfg.Proxy.TokenThresholds,
 		KeepRecent:            cfg.Proxy.KeepRecent,
 		DataDir:               dataDir,
-		OpenAITargetURL:      cfg.Proxy.OpenAITarget,
+		OpenAITargetURL:       cfg.Proxy.OpenAITarget,
+		ProviderTargets:       cfg.Proxy.ProviderTargets,
 		// Signal reflection
 		SignalsEnabled:     cfg.Signals.Enabled,
 		SignalsMode:        cfg.Signals.Mode,
@@ -59,13 +60,15 @@ func runProxy() {
 		PromptDelegationContract: cfg.Proxy.PromptDelegationContract,
 		PromptClarifyFirst:       cfg.Proxy.PromptClarifyFirst,
 		PromptCodeToolsFirst:     cfg.Proxy.PromptCodeToolsFirst,
+		PromptWikiFirst:          cfg.Proxy.PromptWikiFirst,
 		PromptPatternSuggest:     cfg.Proxy.PromptPatternSuggest,
 		EffortFloor:          cfg.Proxy.EffortFloor,
 		SkillEvalInject:      cfg.Proxy.SkillEvalInject,
-		CacheKeepaliveEnabled: cfg.Proxy.CacheKeepaliveEnabled,
-		CacheKeepaliveMode:    cfg.Proxy.CacheKeepaliveMode,
-		CacheKeepalivePings5m: cfg.Proxy.CacheKeepalivePings5m,
-		CacheKeepalivePings1h: cfg.Proxy.CacheKeepalivePings1h,
+		CacheKeepaliveEnabled:     cfg.Proxy.CacheKeepaliveEnabled,
+		CacheKeepaliveMode:        cfg.Proxy.CacheKeepaliveMode,
+		CacheKeepalivePings5m:     cfg.Proxy.CacheKeepalivePings5m,
+		CacheKeepalivePings1h:     cfg.Proxy.CacheKeepalivePings1h,
+		CacheKeepaliveMinMessages: cfg.Proxy.CacheKeepaliveMinMessages,
 		// Forked agents
 		ForkedAgentsEnabled:            cfg.ForkedAgents.Enabled,
 		ForkedAgentsModel:              cfg.ForkedAgentsModelID(),
@@ -73,6 +76,10 @@ func runProxy() {
 		ForkedAgentsMaxFailures:        3,
 		ForkedAgentsMaxForksPerSession: cfg.ForkedAgents.MaxForksPerSession,
 		ForkedAgentsDebug:              cfg.ForkedAgents.Debug,
+		QualityModelID:                 cfg.QualityModelID(),
+		// Per-model feature gates
+		ModelFeatures:  cfg.Proxy.ModelFeatures,
+		FeatureDefaults: cfg.Proxy.FeatureDefaults,
 	}
 
 	// CLI overrides

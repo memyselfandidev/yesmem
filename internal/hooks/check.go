@@ -88,8 +88,8 @@ func RunCheck(dataDir string) {
 		// Dialog tools: register session_id so daemon knows who's calling
 		// PreToolUse fires BEFORE the MCP call → daemon has the ID when send_to arrives
 		if hook.SessionID != "" {
-			registerPID(dataDir, hook.SessionID, os.Getppid())
-			writePIDFile(dataDir, hook.SessionID, os.Getppid())
+			RegisterPID(dataDir, hook.SessionID, os.Getppid())
+			WritePIDFile(dataDir, hook.SessionID, os.Getppid())
 		}
 		emitReminder("")
 		return
@@ -155,7 +155,7 @@ func RunCheck(dataDir string) {
 		checkSaveCount(store, hook.ToolName, hashInput(inputStr))
 	}
 
-	gotchas, err := store.GetActiveLearnings("gotcha", "", "", "")
+	gotchas, err := store.GetActiveLearnings("gotcha", "", "", "", 0)
 	if err != nil || len(gotchas) == 0 {
 		emitReminder("")
 		return

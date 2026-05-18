@@ -243,12 +243,14 @@ Das Scratchpad ist der zentrale Kommunikationskanal zwischen allen Agents. Es is
 
 ### Benachrichtigungen (send_to + ACK)
 
-Nachrichten zwischen Agents laufen über `send_to()`. Der Heartbeat relayed sie alle 2 Sekunden an den Empfänger. **Zustellung ist nicht garantiert** — der Empfänger muss bestätigen.
+Nachrichten zwischen Agents laufen über `send_to()`. Der Heartbeat relayed sie alle 2 Sekunden an den Empfänger.
+
+**CRITICAL: Every send_to / relay_agent content MUST end with `\n`.** Without trailing newline, the prompt stays in the tmux input line and is never submitted. The agent stops responding to further pushes. Always: `relay_agent(to, "instruction\n")`.
 
 **Protokoll:**
-1. Sender: `send_to(target=EMPFÄNGER_SESSION, content="ERGEBNIS: ergebnis-wirtschaft fertig")`
-2. Heartbeat relayed die Nachricht in den Empfänger-Terminal
-3. Empfänger liest, verarbeitet, und bestätigt: `send_to(target=SENDER_SESSION, content="ACK: ergebnis-wirtschaft erhalten")`
+1. Sender: `send_to(target=RECIPIENT_SESSION, content="RESULT: result-economy done\n")`
+2. Heartbeat relays message to recipient terminal
+3. Recipient reads, processes, confirms: `send_to(target=SENDER_SESSION, content="ACK: result-economy received\n")`
 
 **Regeln:**
 - Jede send_to-Nachricht die eine Aktion erwartet MUSS mit ACK beantwortet werden
@@ -383,20 +385,23 @@ Stoppt ALLE laufenden, frozen und spawning Agents im Projekt. Sendet `/exit` an 
 
 Überschreibbar per `spawn_agent(token_budget=..., model=...)` oder Config.
 
-### Backend-Wahl (Claude vs Codex)
+### Backend-Wahl (Claude vs Codex vs Opencode)
 
 Sub-Agents können verschiedene Backends nutzen:
 
 ```
-spawn_agent(project="{projekt}", section="recherche", backend="codex")
+spawn_agent(project="{projekt}", section="recherche", backend="opencode", model="deepseek-v4-pro")
 ```
 
 | Backend | CLI | Stärken | Einschränkungen |
 |---------|-----|---------|-----------------|
-| `claude` (default) | Claude Code | YesMem-Proxy-Integration, Prompt-Cache, voller MCP-Zugriff | — |
-| `codex` | OpenAI Codex | Anderes Modell (GPT-5.x), Sandbox-Execution, Second Opinion | Kein Proxy-Channel-Inject, nur MCP-Tools für Kommunikation |
+| `claude` (default) | `claude` | YesMem-Proxy-Integration, Prompt-Cache, voller MCP-Zugriff | Nur Anthropic-Modelle (sonnet, opus, haiku). NIEMALS mit DeepSeek nutzen — silent failure (0 turns). |
+| `codex` | `codex` | DeepSeek-Modelle, anderer Provider, Second Opinion | Kein Prompt-Cache. Kein Proxy-Channel-Inject. |
+| `opencode` | `opencode` | Gleiche Fähigkeiten wie codex, anderer Binary-Name | Kein Prompt-Cache. Kein Proxy-Channel-Inject. |
 
-**Codex-Agents kommunizieren ausschließlich über MCP-Tools** (scratchpad, send_to, remember) — nicht über Proxy-Injection. Das funktioniert weil YesMem als MCP-Server in Codex registriert ist.
+**Codex/Opencode-Agents kommunizieren ausschließlich über MCP-Tools** (scratchpad, send_to, remember) — nicht über Proxy-Injection. YesMem ist als MCP-Server registriert.
+
+**Wichtig bei DeepSeek-Modellen:** Immer `backend: "opencode"` oder `backend: "codex"` + `model: "deepseek-v4-pro"`. Niemals `backend: "claude"` mit DeepSeek — der `claude` Binary kennt den Endpoint nicht.
 
 ### Modell-Wahl
 

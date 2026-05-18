@@ -18,6 +18,7 @@ type ForkConfig struct {
 	Prompt      func(ForkContext) string
 	ParseResult func(ForkResponse, *Server) error
 	Gate        func(ForkContext) bool
+	APIFormat   string // "anthropic" (default) or "openai" — controls endpoint and response parsing
 }
 
 // PreviousForkLearning is a learning from a prior fork in this session.
@@ -57,6 +58,71 @@ type ForkResponse struct {
 
 // buildForkRequest clones the original request, appends the fork prompt, and overrides model/stream.
 func buildForkRequest(ctx ForkContext, cfg ForkConfig) ([]byte, error) {
+	// Determine actual model for this fork
+	actualModel := cfg.Model
+	if actualModel == "" {
+		actualModel = extractModelFromBody(ctx.OriginalBody)
+	}
+	isOpenAI := cfg.APIFormat == "openai"
+	if cfg.APIFormat == "" || cfg.APIFormat == "anthropic" {
+		if strings.HasPrefix(strings.ToLower(actualModel), "deepseek") {
+			isOpenAI = true
+		}
+	}
+
+	if isOpenAI {
+		return buildForkRequestOpenAI(ctx, cfg)
+	}
+	return buildForkRequestAnthropic(ctx, cfg)
+}
+
+// buildForkRequestOpenAI builds a fork request for DeepSeek/OpenAI.
+// Appends the fork prompt as a user message. Preserves byte-identical
+// prefix with main request via []json.RawMessage for existing messages.
+// Sets stream=false for non-SSE response parsing.
+func buildForkRequestOpenAI(ctx ForkContext, cfg ForkConfig) ([]byte, error) {
+	// Use json.RawMessage to preserve raw bytes of all non-message fields
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(ctx.OriginalBody, &raw); err != nil {
+		return nil, fmt.Errorf("unmarshal original: %w", err)
+	}
+
+	// Extract messages as raw JSON blobs — preserves internal key order
+	var msgList []json.RawMessage
+	if msgRaw, ok := raw["messages"]; ok {
+		if err := json.Unmarshal(msgRaw, &msgList); err != nil {
+			return nil, fmt.Errorf("unmarshal messages: %w", err)
+		}
+	}
+	if msgList == nil {
+		return nil, fmt.Errorf("no messages in original request")
+	}
+
+	// Append fork prompt as user message
+	b, err := json.Marshal(map[string]any{
+		"role": "user", "content": cfg.Prompt(ctx),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal fork prompt: %w", err)
+	}
+	msgList = append(msgList, json.RawMessage(b))
+
+	newMsgs, err := json.Marshal(msgList)
+	if err != nil {
+		return nil, fmt.Errorf("marshal messages: %w", err)
+	}
+	raw["messages"] = json.RawMessage(newMsgs)
+
+	raw["stream"] = json.RawMessage(`false`)
+
+	return json.Marshal(raw)
+}
+
+// buildForkRequestAnthropic is the original implementation for Anthropic API forks.
+// Maintains the existing behavior: strips anti_distillation/context_management,
+// overrides max_tokens. Cache prefix preservation is not needed for Anthropic
+// which uses explicit cache_control breakpoints, not automatic prefix hashing.
+func buildForkRequestAnthropic(ctx ForkContext, cfg ForkConfig) ([]byte, error) {
 	var req map[string]any
 	if err := json.Unmarshal(ctx.OriginalBody, &req); err != nil {
 		return nil, fmt.Errorf("unmarshal original: %w", err)
@@ -94,6 +160,16 @@ func buildForkRequest(ctx ForkContext, cfg ForkConfig) ([]byte, error) {
 	// to the main thread request, so Anthropic serves a cache read instead
 	// of a full cache write (~$43/day savings at current fork volume).
 
+	// Normalize effort to "high" for fork requests. The original request may
+	// carry "xhigh" (e.g. from OpenCode CLI) which DeepSeek and other providers
+	// reject with 400: "This model does not support effort level 'xhigh'".
+	// "high" is the maximum universally supported level across all providers.
+	if oc, ok := req["output_config"].(map[string]any); ok {
+		oc["effort"] = "high"
+	} else {
+		req["output_config"] = map[string]any{"effort": "high"}
+	}
+
 	// Strip anti-distillation (fake tools would pollute fork response)
 	delete(req, "anti_distillation")
 	// Strip context_management — rejected by Anthropic API with 400
@@ -130,22 +206,36 @@ func (s *Server) fireForkedAgents(ctx ForkContext, configs []ForkConfig) {
 	for _, cfg := range configs {
 		if cfg.Gate != nil && !cfg.Gate(ctx) {
 			if debugFork {
-				s.logger.Printf("[req %d] fork %s: gate blocked (tokens=%d, msgs=%d)", ctx.ReqIdx, cfg.Name, ctx.TokensUsed, ctx.MessageCount)
+				s.logger.Printf("[req %d %s] fork %s: gate blocked (tokens=%d, msgs=%d)",
+					ctx.ReqIdx, s.version, cfg.Name, ctx.TokensUsed, ctx.MessageCount)
 			}
 			continue
 		}
 
 		reqBody, err := buildForkRequest(ctx, cfg)
 		if err != nil {
-			s.logger.Printf("[req %d] fork %s: build error: %v", ctx.ReqIdx, cfg.Name, err)
+			s.logger.Printf("[req %d %s] fork %s: build error: %v",
+				ctx.ReqIdx, s.version, cfg.Name, err)
 			s.forkState.RecordFailure(ctx.ThreadID)
 			continue
 		}
 
-		endpoint := s.cfg.TargetURL
-		resp, err := doForkCall(endpoint, s.cfg.APIKey, ctx.AuthHeader, reqBody)
+		actualModel := extractModelFromBody(reqBody)
+		isOpenAI := cfg.APIFormat == "openai"
+		if cfg.APIFormat == "" || cfg.APIFormat == "anthropic" {
+			if strings.HasPrefix(strings.ToLower(actualModel), "deepseek") {
+				isOpenAI = true
+			}
+		}
+		endpoint := s.resolveAnthropicTarget(actualModel)
+		if isOpenAI {
+			endpoint = s.resolveOpenAITarget(actualModel)
+		}
+
+		resp, err := doForkCall(endpoint, s.cfg.APIKey, ctx.AuthHeader, reqBody, isOpenAI)
 		if err != nil {
-			s.logger.Printf("%s[req %d] fork %s: API error: %v%s", colorOrange, ctx.ReqIdx, cfg.Name, err, colorReset)
+			s.logger.Printf("%s[req %d %s] fork %s: API error: %v%s",
+				colorOrange, ctx.ReqIdx, s.version, cfg.Name, err, colorReset)
 			s.forkState.RecordFailure(ctx.ThreadID)
 			continue
 		}
@@ -154,8 +244,9 @@ func (s *Server) fireForkedAgents(ctx ForkContext, configs []ForkConfig) {
 		resp.SourceMsgFrom = 0
 		resp.SourceMsgTo = ctx.MessageCount - 1
 
-		s.logger.Printf("[req %d] fork %s: %d in / %d cached / %d out tokens",
-			ctx.ReqIdx, cfg.Name, resp.Usage.InputTokens, resp.Usage.CacheReadInputTokens, resp.Usage.OutputTokens)
+		s.logger.Printf("[req %d %s] fork %s: %d in / %d cached / %d out tokens",
+			ctx.ReqIdx, s.version, cfg.Name,
+			resp.Usage.InputTokens, resp.Usage.CacheReadInputTokens, resp.Usage.OutputTokens)
 
 		go s.queryDaemon("track_fork_usage", map[string]any{
 			"input_tokens":          resp.Usage.InputTokens,
@@ -166,7 +257,8 @@ func (s *Server) fireForkedAgents(ctx ForkContext, configs []ForkConfig) {
 
 		if cfg.ParseResult != nil {
 			if err := cfg.ParseResult(resp, s); err != nil {
-				s.logger.Printf("[req %d] fork %s: parse error: %v", ctx.ReqIdx, cfg.Name, err)
+				s.logger.Printf("[req %d %s] fork %s: parse error: %v",
+					ctx.ReqIdx, s.version, cfg.Name, err)
 			}
 		}
 
@@ -176,24 +268,44 @@ func (s *Server) fireForkedAgents(ctx ForkContext, configs []ForkConfig) {
 
 // doForkCall makes the API call and parses the text response.
 // Uses apiKey for x-api-key auth; falls back to origHeaders for subscription forwarding.
-func doForkCall(endpoint, apiKey string, origHeaders http.Header, reqBody []byte) (ForkResponse, error) {
+// When isOpenAI is true, uses /v1/chat/completions endpoint and OpenAI response format.
+func doForkCall(endpoint, apiKey string, origHeaders http.Header, reqBody []byte, isOpenAI bool) (ForkResponse, error) {
 	client := &http.Client{Timeout: 120 * time.Second}
 
-	apiURL := endpoint + "/v1/messages"
+	var apiURL string
+	if isOpenAI {
+		apiURL = endpoint + "/v1/chat/completions"
+	} else {
+		apiURL = endpoint + "/v1/messages"
+	}
+
 	httpReq, err := http.NewRequest("POST", apiURL, bytes.NewReader(reqBody))
 	if err != nil {
 		return ForkResponse{}, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
-	if apiKey != "" {
-		httpReq.Header.Set("x-api-key", apiKey)
-	} else if origHeaders != nil {
-		// Subscription: OAuth token must be sent as x-api-key, not Authorization Bearer
-		if auth := origHeaders.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
-			httpReq.Header.Set("x-api-key", strings.TrimPrefix(auth, "Bearer "))
-		} else if xKey := origHeaders.Get("X-Api-Key"); xKey != "" {
-			httpReq.Header.Set("x-api-key", xKey)
+
+	if isOpenAI {
+		if origHeaders != nil {
+			if auth := origHeaders.Get("Authorization"); auth != "" {
+				httpReq.Header.Set("Authorization", auth)
+			} else if xKey := origHeaders.Get("X-Api-Key"); xKey != "" {
+				httpReq.Header.Set("Authorization", "Bearer "+xKey)
+			}
+		}
+		if apiKey != "" && httpReq.Header.Get("Authorization") == "" {
+			httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+	} else {
+		httpReq.Header.Set("anthropic-version", "2023-06-01")
+		if apiKey != "" {
+			httpReq.Header.Set("x-api-key", apiKey)
+		} else if origHeaders != nil {
+			if auth := origHeaders.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				httpReq.Header.Set("x-api-key", strings.TrimPrefix(auth, "Bearer "))
+			} else if xKey := origHeaders.Get("X-Api-Key"); xKey != "" {
+				httpReq.Header.Set("x-api-key", xKey)
+			}
 		}
 	}
 
@@ -208,14 +320,13 @@ func doForkCall(endpoint, apiKey string, origHeaders http.Header, reqBody []byte
 		return ForkResponse{}, fmt.Errorf("read response: %w", err)
 	}
 
-	if resp.StatusCode != 200 {
-		preview := string(body)
-		if len(preview) > 200 {
-			preview = preview[:200]
-		}
-		return ForkResponse{}, fmt.Errorf("api error %d: %s", resp.StatusCode, preview)
+	if isOpenAI {
+		return parseOpenAIResponse(body)
 	}
+	return parseAnthropicResponse(body)
+}
 
+func parseAnthropicResponse(body []byte) (ForkResponse, error) {
 	var apiResp struct {
 		Content []struct {
 			Type string `json:"type"`
@@ -255,6 +366,48 @@ func doForkCall(endpoint, apiKey string, origHeaders http.Header, reqBody []byte
 			OutputTokens:             apiResp.Usage.OutputTokens,
 			CacheReadInputTokens:     apiResp.Usage.CacheReadInputTokens,
 			CacheCreationInputTokens: apiResp.Usage.CacheCreationInputTokens,
+		},
+	}, nil
+}
+
+func parseOpenAIResponse(body []byte) (ForkResponse, error) {
+	var apiResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			CacheHitTokens   int `json:"prompt_cache_hit_tokens"`
+			CacheMissTokens  int `json:"prompt_cache_miss_tokens"`
+		} `json:"usage"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return ForkResponse{}, fmt.Errorf("unmarshal: %w", err)
+	}
+
+	if apiResp.Error != nil {
+		return ForkResponse{}, fmt.Errorf("api error: %s", apiResp.Error.Message)
+	}
+
+	var text string
+	for _, choice := range apiResp.Choices {
+		text += choice.Message.Content
+	}
+
+	return ForkResponse{
+		Content: text,
+		Usage: ReflectionUsage{
+			InputTokens:              apiResp.Usage.PromptTokens,
+			OutputTokens:             apiResp.Usage.CompletionTokens,
+			CacheReadInputTokens:     apiResp.Usage.CacheHitTokens,
+			CacheCreationInputTokens: apiResp.Usage.CacheMissTokens,
 		},
 	}, nil
 }

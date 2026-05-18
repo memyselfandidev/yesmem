@@ -338,7 +338,7 @@ func TestWebFetchGotchaMatching(t *testing.T) {
 	keywords := extractKeywords("WebFetch reddit.com")
 
 	// Reload learning to get entities populated
-	gotchas, err := store.GetActiveLearnings("gotcha", "", "", "")
+	gotchas, err := store.GetActiveLearnings("gotcha", "", "", "", 0)
 	if err != nil || len(gotchas) == 0 {
 		t.Fatalf("GetActiveLearnings: %v (len=%d)", err, len(gotchas))
 	}
