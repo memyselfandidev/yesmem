@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -302,6 +303,24 @@ func RunCheck(dataDir string) {
 
 	// Check for block-worthy gotchas (hit_count >= threshold)
 	allMatches := append(projectMatches, globalMatches...)
+
+	// Per-session cap: skip gotchas already shown 3+ times this session.
+	// Reset on session restart (new SessionID → new keys). Global injectionDecay
+	// still handles cross-session staleness independently.
+	if hook.SessionID != "" && len(allMatches) > 0 {
+		var capped []matchedGotcha
+		for _, mg := range allMatches {
+			key := fmt.Sprintf("gotcha_count:%s:%d", hook.SessionID, mg.learning.ID)
+			countStr, _ := store.GetProxyState(key)
+			count, _ := strconv.Atoi(countStr)
+			if count >= 3 {
+				continue
+			}
+			capped = append(capped, mg)
+		}
+		allMatches = capped
+	}
+
 	if bg := findBlockableGotcha(allMatches); bg != nil {
 		store.IncrementMatchCounts([]int64{bg.learning.ID})
 		store.IncrementInjectCounts([]int64{bg.learning.ID})
@@ -325,6 +344,14 @@ func RunCheck(dataDir string) {
 		store.SetProxyState("last_gotcha_ids", string(idsJSON))
 		store.SetProxyState("last_gotcha_tool", hook.ToolName)
 		store.SetProxyState("last_gotcha_input_hash", hashInput(inputStr))
+
+		// Per-session cap: increment injection counter for each injected gotcha
+		for _, id := range injectedIDs {
+			key := fmt.Sprintf("gotcha_count:%s:%d", hook.SessionID, id)
+			countStr, _ := store.GetProxyState(key)
+			count, _ := strconv.Atoi(countStr)
+			store.SetProxyState(key, strconv.Itoa(count+1))
+		}
 	} else {
 		store.SetProxyState("last_gotcha_ids", "")
 	}
