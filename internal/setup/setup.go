@@ -83,6 +83,9 @@ func runDefaults(home, dataDir, binaryPath string) error {
 			provider = "cli"
 			apiKey, _ = findClaudeCodeKey(home)
 		}
+	case "opencode":
+		provider = "openai_compatible"
+		apiKey = ""
 	default:
 		provider = "cli"
 		apiKey, _ = findClaudeCodeKey(home)

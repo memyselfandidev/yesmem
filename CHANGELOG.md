@@ -9,12 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add opencode as third provider option in setup wizard
 - Shared SYSTEM.md template for OpenCode + Claude Code pipelines
 - Add SYSTEM.md with memory depth layers to repo
 - Hybrid_search nudge on first user message
 
 ### Changed
 
+- Update CHANGELOG
 - Add auto_configure_providers field (default: true)
 - Update .gitignore, timestamp hint wording
 
