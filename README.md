@@ -71,7 +71,7 @@ That's where you start. Not from zero. From where it matters.
 - **Find anything:** full-text + semantic search combined (BM25 + 512d vectors, Reciprocal Rank Fusion)
 - **Your words matter most,** 4-tier trust hierarchy: `user_stated` > `agreed_upon` > `claude_suggested` > `llm_extracted`
 - **Noise fades, signal stays:** Ebbinghaus decay based on conversation turns. Useful knowledge strengthens, irrelevant fades.
-- **Smart extraction,** 70% noise filtered before extraction starts. Then: extraction → embedding → quality refinement → clustering.
+- **Smart extraction,** content-aware truncation before extraction starts. Then: extraction → embedding → quality refinement → clustering.
 - **One binary, one command:** no Python, no Node, no Docker, no cloud account. `yesmem setup`, done.
 - **Your data stays yours,** everything in `~/.claude/yesmem/`. Nothing leaves your machine.
 - **Free:** FSL-1.1-ALv2. Use it for anything except building a competing product. After 2 years, Apache 2.0.
@@ -105,7 +105,7 @@ All data local. No cloud. No external dependencies. Pure Go — no CGo, no C com
 
 ## Features
 
-67 MCP tools · ~130 daemon RPCs · 53 CLI commands — **[full reference →](Features.md)**
+70 MCP tools · 130 daemon RPCs · 64 CLI commands — **[full reference →](Features.md)**
 
 ### Find & Remember
 - **Find anything across all sessions** — full-text + semantic search combined via Reciprocal Rank Fusion
@@ -115,7 +115,7 @@ All data local. No cloud. No external dependencies. Pure Go — no CGo, no C com
 - **Quality signals** — match, inject, use, save, noise — six independent measures per learning, not a hit counter
 
 ### Automatic Learning
-- **Smart extraction** — 70% noise filtered, then extraction → embedding → quality refinement → narrative generation → clustering → recurrence detection
+- **Smart extraction** — content-aware truncation, then extraction → embedding → quality refinement → narrative generation → clustering → recurrence detection
 - **Zero overhead** — extraction runs async in the background after every response
 - **Knowledge self-organizes** — dedup and distillation without user intervention
 
@@ -140,7 +140,7 @@ The proxy is **optional**. YesMem works fully without it — all MCP tools, brie
 - **Spawn parallel agents** — heartbeat monitoring, crash recovery, cascade shutdown
 - **Agents talk to each other** — `send_to()`, `broadcast()`, typed messages across sessions
 - **Shared state** — multi-agent scratchpad for coordination
-- **Plans that persist** — `set_plan()`, `update_plan()`, checkpoint injection every 20k tokens
+- **Plans that persist** — `set_plan()`, `update_plan()`, checkpoint injection every 10k tokens
 
 ### Knowledge That Grows
 - **Index your docs** — Markdown, reStructuredText, PDF. Heading-aware chunking with rich metadata.
@@ -156,13 +156,13 @@ The proxy is **optional**. YesMem works fully without it — all MCP tools, brie
 - **Gotcha decay** — stale gotchas fade, fresh ones surface. Precision-based scoring with tiered output eliminates noise from resolved issues
 
 ### Tools & CLI
-- **67 MCP tools** — search, remember, code intelligence, capabilities, personas, plans, agents, docs, scratchpad, config
-- **~53 CLI commands** — daemon, proxy, setup, extraction, benchmarking, export/import, cost tracking
-- **~130 daemon RPC methods** — full programmatic access
+- **70 MCP tools** — search, remember, code intelligence, capabilities, personas, plans, agents, docs, scratchpad, config
+- **64 CLI commands** — daemon, proxy, setup, extraction, benchmarking, export/import, cost tracking
+- **130 daemon RPC methods** — full programmatic access
 
 ### Scheduled Agents
 - **Cron-based task scheduler** — define recurring or one-shot jobs with cron expressions
-- **Two execution modes** — `agent` (visible tmux window) or `headless` (silent `claude -p` subprocess)
+- **Three execution modes** — `agent` (visible tmux window), `headless` (silent `claude -p` subprocess), or `bash` (cap handler without LLM)
 - **Caps-powered automation** — scheduled agents activate and run caps for predictable, repeatable tasks
 - **Persistent results** — output stored in scratchpad and cap_store, not lost between runs
 - **Self-hosted alternative** to Anthropic Cloud Routines — runs locally with full memory, MCP, and file access

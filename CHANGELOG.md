@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Fix README — correct counts (70/64/130), 10k plan interval, remove unverifiable 70% claims, 3 scheduler modes
 - April 21-May 4 commit audit — add cap category + cap_<name> origin to memory.md
 - Add 7 missing features from commit audit — excludeProjects, claim_and_read, staus/uninstall, guard git context, opencode merge/update, caps_dir
 - Commit audit May 5-21 — 7 missing features found, 4 removed, 18 documented
