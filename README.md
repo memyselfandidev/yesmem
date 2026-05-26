@@ -6,7 +6,7 @@
 [![License: FSL-1.1-ALv2](https://img.shields.io/badge/License-FSL--1.1--ALv2-blue)](LICENSE)
 [![LoCoMo](https://img.shields.io/badge/LoCoMo-0.87-brightgreen)](docs/BENCHMARK.md)
 
-**Adaptive context window for Claude Code — every session starts where it matters, not at zero.**
+**Adaptive context window for Claude Code, OpenCode, Codex and more — every session starts where it matters, not at zero.**
 
 Sessions that never forget. Context that collapses losslessly.
 Knowledge that self-corrects. One binary, zero setup friction.
@@ -30,7 +30,7 @@ Or download the binary from [GitHub Releases](https://github.com/carsteneu/yesme
 
 ## Why YesMem
 
-Tuesday morning. New session. You type: *"What did we do last Tuesday?"* Claude tells you — the refactoring, the bug in the auth middleware, the decision to switch to connection pooling. You ask: *"What was still open?"* Claude shows you. You ask: *"Why did we stop?"* Claude explains — you hit a dependency issue, decided to wait for the upstream fix. You ask: *"What did you think about that approach?"* Claude gives you its honest assessment from last week's context, not a guess.
+Tuesday morning. New session. You type: *"What did we do last Tuesday?"* Your agent tells you — the refactoring, the bug in the auth middleware, the decision to switch to connection pooling. You ask: *"What was still open?"* It shows you. You ask: *"Why did we stop?"* It explains — you hit a dependency issue, decided to wait for the upstream fix. You ask: *"What did you think about that approach?"* It gives you its honest assessment from last week's context, not a guess.
 
 That's where you start. Not from zero. From where it matters.
 
@@ -38,15 +38,15 @@ That's where you start. Not from zero. From where it matters.
 
 | Feature | What it does |
 |---------|-------------|
-| **Infinite sessions** | Lossless context collapsing — three hours in, need something from hour one? Claude pulls it back, word for word. |
+| **Infinite sessions** | Lossless context collapsing — three hours in, need something from hour one? Your agent pulls it back, word for word. |
 | **Adaptive context window** | Set your threshold, resize on the fly. 150K for focused work, 500K for deep research. No performance degradation. |
-| **Zero-effort knowledge** | Extraction runs in the background after every response. Next morning, Claude already knows what you fixed. |
-| **Self-correcting knowledge** | Switched from REST to gRPC? Claude stops suggesting REST. Your explicit decisions outrank automatic guesses. |
+| **Zero-effort knowledge** | Extraction runs in the background after every response. Next morning, your agent already knows what you fixed. |
+| **Self-correcting knowledge** | Switched from REST to gRPC? Your agent stops suggesting REST. Your explicit decisions outrank automatic guesses. |
 | **Costs drop over time** | Context hits the prompt cache across collapsing cycles. Longer you work, cheaper it gets. |
 | **Rules that stick** | CLAUDE.md re-injected every 40k tokens mid-session — not buried under tool outputs after 20 minutes. |
 | **Immersive handovers** | "Last time you were debugging the race condition in the proxy..." — not "here are 5 bullet points." |
-| **Docs on demand** | Index your docs once, Claude searches them on demand and gets actual function signatures instead of guessing. |
-| **Codebase-native** | Pre-built function graph steers Claude toward `search_code_index` instead of shelling out to grep. Worktree-aware. |
+| **Docs on demand** | Index your docs once, your agent searches them on demand and gets actual function signatures instead of guessing. |
+| **Codebase-native** | Pre-built function graph steers your agent toward `search_code_index` instead of shelling out to grep. Worktree-aware. |
 | **Parallel agents** | Refactor auth, write tests, update docs — simultaneously. Heartbeat, crash recovery, cascade shutdown built in. |
 | **Your system prompt** | SYSTEM.md template in first-person. The model knows it has memory, knows how to search it. Applied across Claude Code, OpenCode, and Codex. |
 | **Self-configuring routing** | Reads `models.json`, `opencode.json`, `auth.json` — discovers providers, patches base URLs, routes models. Zero manual config. |
@@ -83,9 +83,9 @@ Single Go binary (~120MB with embedded SSE embedding model). Three cooperating p
 | Component | Role | Communication |
 |-----------|------|---------------|
 | **Daemon** | Background service: indexing, extraction, search, embedding, all RPC | Unix socket + HTTP |
-| **MCP Server** | Thin stdio interface for Claude Code — forwards to daemon | stdio / Unix socket |
-| **Proxy** | Between Claude Code and Anthropic API — context collapsing, prompt cache, associative injection, system prompt rewrite. **Optional** — YesMem works without it. | HTTP `:9099` |
-| **Hooks** | Event-driven Claude Code integration (SessionStart, PreToolUse, PostToolUseFailure, UserPromptSubmit) | CLI subcommands |
+| **MCP Server** | Thin stdio interface for your coding agent — forwards to daemon | stdio / Unix socket |
+| **Proxy** | Between your coding agent and its upstream API — context collapsing, prompt cache, associative injection, system prompt rewrite. **Optional** — YesMem works without it. | HTTP `:9099` |
+| **Hooks** | Event-driven coding agent integration (SessionStart, PreToolUse, PostToolUseFailure, UserPromptSubmit) | CLI subcommands |
 
 All data local. No cloud. No external dependencies. Pure Go — no CGo, no C compiler. One static binary.
 
@@ -98,7 +98,7 @@ All data local. No cloud. No external dependencies. Pure Go — no CGo, no C com
 ### Find & Remember
 - **Find anything across all sessions** — full-text + semantic search combined via Reciprocal Rank Fusion
 - **Knowledge self-corrects** — supersede chains with trust-based resistance, cycle detection, contradiction detection
-- **Your words outrank Claude's guesses** — `user_stated` > `agreed_upon` > `claude_suggested` > `llm_extracted`
+- **Your words outrank the agent's guesses** — `user_stated` > `agreed_upon` > `claude_suggested` > `llm_extracted`
 - **Signal stays, noise fades** — Ebbinghaus decay based on conversation turns, not wall-clock time
 - **Quality signals** — match, inject, use, save, noise — six independent measures per learning, not a hit counter
 
@@ -119,7 +119,7 @@ The proxy is **optional**. YesMem works fully without it — all MCP tools, brie
 - **Docs when you need them** — indexed documentation searchable on demand via `docs_search()`
 
 ### Continuity
-- **Claude adapts to your style** — 50+ traits across 6 dimensions, evolving from how you work
+- **Your agent adapts to your style** — 50+ traits across 6 dimensions, evolving from how you work
 - **Pick up where you left off** — immersive handovers: "last time you were debugging the race condition in the proxy..."
 - **Every session starts ready** — open tasks, project context, your communication style — before you type a character
 - **CC /recap captured** — when Claude Code generates session recaps after idle, YesMem captures them as pulse learnings and weaves them into the session timeline
@@ -138,7 +138,7 @@ The proxy is **optional**. YesMem works fully without it — all MCP tools, brie
 
 ### Code Intelligence
 - **Pre-built code graph** — scans your codebase (Go, Python, TypeScript, Java, PHP, Rust, and more), builds a symbol graph with functions, types, call edges, and import chains
-- **Graph-first navigation** — Claude uses `search_code_index`, `get_file_symbols`, `get_code_snippet` instead of spawning agents or shelling out to grep. Faster, cheaper, more accurate
+- **Graph-first navigation** — Your agent uses `search_code_index`, `get_file_symbols`, `get_code_snippet` instead of spawning agents or shelling out to grep. Faster, cheaper, more accurate
 - **Code Map at session start** — package table, key files, entry points, active zones (7-day change frequency), change coupling — injected automatically
 - **Worktree-aware** — git worktrees share the same scan cache, learnings, and project identity. No other memory system handles this
 - **Gotcha decay** — stale gotchas fade, fresh ones surface. Precision-based scoring with tiered output eliminates noise from resolved issues

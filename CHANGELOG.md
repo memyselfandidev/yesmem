@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Rewrite README from Claude-only to multi-platform (Claude Code, OpenCode, Codex and more)
 - Add AI agent orientation hints to README and CLAUDE.md, update CHANGELOG and HN draft
 
 ## [2.1.2] - 2026-05-22
