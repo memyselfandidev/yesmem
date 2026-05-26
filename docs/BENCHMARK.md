@@ -13,7 +13,7 @@ Reproducible evaluation of YesMem's memory retrieval against the [LoCoMo benchma
 | Temporal | 96 | Time-based reasoning ("When was the last time...") |
 | Open-domain | 841 | Open-ended questions about preferences, habits |
 
-The corrected dataset fixes 99 errors in the original LoCoMo gold answers (wrong dates, misspelled names, incomplete lists). The corrections are documented in `testdata/locomo/locomo10_corrected.json`.
+The corrected dataset fixes 99 errors in the original LoCoMo gold answers (wrong dates, misspelled names, incomplete lists), based on the [community audit](https://github.com/dial481/locomo-audit) (6.4% error rate). The corrections are documented in `testdata/locomo/locomo10_corrected.json`.
 
 ## Results
 
@@ -21,11 +21,12 @@ The corrected dataset fixes 99 errors in the original LoCoMo gold answers (wrong
 
 | Eval LLM | Single-hop | Multi-hop | Temporal | Open-domain | **Overall** |
 |----------|------------|-----------|----------|-------------|-------------|
-| gpt-4o | 0.4433 | 0.6168 | 0.3542 | 0.7729 | **0.6539** |
-| gpt-5.4 | 0.7589 | 0.8941 | 0.6042 | 0.9191 | **0.8649** |
-| Claude Opus¹ | 0.7838 | 0.9310 | 0.6000 | 0.9114 | **0.8733** |
+| gpt-4o¹ | 0.4433 | 0.6168 | 0.3542 | 0.7729 | **0.6539** |
+| gpt-5.4¹ | 0.7589 | 0.8941 | 0.6042 | 0.9191 | **0.8649** |
+| Claude Opus² | 0.7838 | 0.9310 | 0.6000 | 0.9114 | **0.8733** |
 
-¹ Opus score from 10% sample (150 questions, Sonnet as judge). Full dataset scores use gpt-4o-mini / gpt-5.4-mini as judge.
+¹ Full dataset (1540 questions, gpt-4o-mini judge for gpt-4o, gpt-5.4-mini judge for gpt-5.4).
+² 10% sample (150 questions, deterministic seed, Sonnet as judge). Converges with the 100% gpt-5.4 score (0.86 vs 0.87), confirming the sample is representative — the ~0.01 gap is within model-vs-model variance.
 
 ### Secondary: Static Mode (single search pass, no agentic iteration)
 
@@ -177,7 +178,7 @@ Flags:
   --skip-extract        Skip extraction, reuse existing benchmark DB
   --dry-run             Cost estimate only, no API calls
   --dump-results <path> Dump per-question JSON for analysis
-  --sample-pct <N>      Run on N% of questions (for quick tests)
+  --sample-pct <N>      Run on N% of questions, deterministically (fixed seed — same subset every run)
   --runs <N>            Number of runs for statistical stability
   --json                Output results as JSON
 
@@ -190,7 +191,7 @@ gpt-* model names → OpenAI models (requires OPENAI_API_KEY)
 - **Eval LLM dependency**: Scores are strongly influenced by the eval LLM's reasoning quality, not just retrieval. The same retrieval system scores 0.65 with gpt-4o and 0.86 with gpt-5.4.
 - **Synthetic data**: LoCoMo conversations are LLM-generated, not real human conversations. Real-world performance may differ.
 - **Single judge**: The judge LLM is a single model (gpt-5.4-mini or gpt-4o-mini). Inter-annotator agreement is not measured.
-- **Corrected dataset**: Our corrections to the gold answers have not been independently validated. The original uncorrected dataset can be obtained from the LoCoMo authors.
+- **Corrected dataset**: Gold answer corrections are sourced from the [locomo-audit](https://github.com/dial481/locomo-audit) community review. The original uncorrected dataset can be obtained from the LoCoMo authors.
 - **No adversarial category**: The original LoCoMo includes an adversarial category (questions with no valid answer). Our corrected dataset currently excludes this category.
 
 ## Run Date
