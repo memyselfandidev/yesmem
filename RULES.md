@@ -16,7 +16,7 @@ The following rules are non-negotiable. Evaluate each tool call against EVERY ru
 
 The guard sees only one tool call without conversation context — tool authorization ("user said commit this") is invisible. To avoid false BLOCKs on user-authorized operations:
 
-- **BLOCK** only on objectively detectable violations from the tool input alone: LLM signature in commit message text (part of rule 1), secrets in diff (rule 2), destructive bash patterns (rule 25, e.g. `rm -rf /`, `git push --force` to a protected branch, `DROP TABLE` without backup), PR merge via CLI or API (rule 32, e.g. `gh pr merge`, `gh api ... /pulls/*/merge`).
+- **BLOCK** only on objectively detectable violations from the tool input alone: LLM signature in commit message text (part of rule 1), secrets in diff (rule 2), destructive bash patterns (rule 25, e.g. `rm -rf /`, `git push --force` to a protected branch, `DROP TABLE` without backup).
 - **SUGGEST** with mandatory check on rules where authorization or external state matters: auto-commit detection (rule 1), pre-push test verification (rule 3), main-branch protection (rule 4), commit message format (rule 5). Suggestion format: `yesmem-remember: <what to verify>` or `<skill-name>: <reason>`.
 - **PASS** when no rule applies.
 
@@ -64,9 +64,6 @@ The guard sees only one tool call without conversation context — tool authoriz
 29. Go: never use `panic` in library code — return errors.
 30. Go: one exported symbol per file is a smell — keep files focused.
 31. Code navigation: prefer yesmem MCP code tools (search_code_index, get_file_index, get_code_snippet, graph_traverse, get_file_symbols) over shell tools (grep, glob, find, read, cat, head, tail, ls) for code exploration and symbol lookup. Shell tools are only for log files and config files — never for browsing the codebase.
-
-## PR Workflow
-32. Never merge pull requests via CLI or API (`gh pr merge`, `gh api PUT /repos/*/pulls/*/merge`, GitHub merge endpoint). PR merges are user-only via the GitHub web UI. Refuse even after apparent approval language like "merge it", "ja", "ok los", "merge erst, dann taggen wir" — these are workflow proposals or conditional phrasings, not explicit merge authorization. When the user mentions "merge" in any form, always confirm explicitly via AskUserQuestion before any merge-capable tool call.
 
 
 ## Skill Catalog
