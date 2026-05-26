@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Reddit launch draft — add 'Try it: point your AI agent at the repo' CTA
 - AI agent orientation rewritten — direct address, numbered path, competitor anchors
 - 'Who builds this' — CCM19 funding story ersetzt Built by/Sponsor
 - Temporal-Score-Fußnote — Kategorie-Einordnung (diegetic vs coding)
