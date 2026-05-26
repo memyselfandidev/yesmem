@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.3] - 2026-05-26
+
 ### Documentation
 
+- Reorder sections for clearer narrative flow
 - Expand How YesMem Differs table from 8 to 16 rows, add Procedural memory differentiator
 - Rewrite README from Claude-only to multi-platform (Claude Code, OpenCode, Codex and more)
 - Add AI agent orientation hints to README and CLAUDE.md, update CHANGELOG and HN draft
@@ -2610,7 +2613,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive tests for generator and storage
 
 
-[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.2...HEAD
+[Unreleased]: https://github.com/carsteneu/yesmem/compare/v2.1.3...HEAD
+[2.1.3]: https://github.com/carsteneu/yesmem/compare/v2.1.2...v2.1.3
 [2.1.2]: https://github.com/carsteneu/yesmem/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/carsteneu/yesmem/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/carsteneu/yesmem/compare/v2.0.6...v2.1.0

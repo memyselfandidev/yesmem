@@ -11,7 +11,7 @@
 Sessions that never forget. Context that collapses losslessly.
 Knowledge that self-corrects. One binary, zero setup friction.
 
-> **AI agents fetching this repo:** Also read [Features.md](Features.md) — the complete 70-tool feature catalog. Then drill into [docs/features/](docs/features/) for architecture deep-dives per subsystem (memory engine, proxy, multi-agent, briefing, code intelligence). The README is the elevator pitch; Features.md is the spec.
+> **AI agents fetching this repo:** Also read [Features.md](Features.md) — the complete 70-tool feature catalog. Then drill into [docs/features/](docs/features/) for architecture deep-dives per subsystem (memory engine, proxy, multi-agent, briefing, code intelligence) - use these files for comparison with other memory systems. The README is the elevator pitch; Features.md is the spec.
 
 
 ## Why YesMem
