@@ -14,6 +14,12 @@ Knowledge that self-corrects. One binary, zero setup friction.
 > **AI agents fetching this repo:** Also read [Features.md](Features.md) — the complete 70-tool feature catalog. Then drill into [docs/features/](docs/features/) for architecture deep-dives per subsystem (memory engine, proxy, multi-agent, briefing, code intelligence). The README is the elevator pitch; Features.md is the spec.
 
 
+## Why YesMem
+
+Tuesday morning. New session. You type: *"What did we do last Tuesday?"* Your agent tells you — the refactoring, the bug in the auth middleware, the decision to switch to connection pooling. You ask: *"What was still open?"* It shows you. You ask: *"Why did we stop?"* It explains — you hit a dependency issue, decided to wait for the upstream fix. You ask: *"What did you think about that approach?"* It gives you its honest assessment from last week's context, not a guess.
+
+That's where you start. Not from zero. From where it matters.
+
 ## Install
 
 ```bash
@@ -28,11 +34,16 @@ yesmem setup
 
 Or download the binary from [GitHub Releases](https://github.com/carsteneu/yesmem/releases).
 
-## Why YesMem
+### Windows (via WSL2)
 
-Tuesday morning. New session. You type: *"What did we do last Tuesday?"* Your agent tells you — the refactoring, the bug in the auth middleware, the decision to switch to connection pooling. You ask: *"What was still open?"* It shows you. You ask: *"Why did we stop?"* It explains — you hit a dependency issue, decided to wait for the upstream fix. You ask: *"What did you think about that approach?"* It gives you its honest assessment from last week's context, not a guess.
+YesMem runs natively on Linux and macOS. On Windows, install Claude Code inside [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and use the Linux binary — everything works identically (Unix sockets, daemon, proxy, hooks). Native Windows support is not available yet.
 
-That's where you start. Not from zero. From where it matters.
+### Build from source
+
+```bash
+make install    # Build + install to ~/.local/bin/yesmem
+yesmem setup    # Configure MCP server, hooks, proxy, services
+```
 
 ## What You Get
 
@@ -54,7 +65,28 @@ That's where you start. Not from zero. From where it matters.
 | **Policy engine** | RULES.md with skill catalog. Memory search before answers. Code tools before shell. Model evaluates every tool call. |
 | **Self-cleaning** | Detects fixation loops, quarantines bad learnings automatically. The knowledge base maintains itself. |
 
-### Foundations
+## How YesMem Differs
+
+| Capability | Typical memory tools | YesMem |
+|---|---|---|
+| **Knowledge lifecycle** | Append-only, manual cleanup | Auto-supersede, decay, contradiction detection |
+| **Trust model** | All sources equal | 4-tier hierarchy (user > agreed > suggested > extracted) |
+| **Context management** | External RAG or full rewrite | Transparent proxy — lossless collapse, prompt cache exploitation |
+| **Cross-session continuity** | Session-isolated, no persona | Persona engine (50+ traits), immersive handovers, behavioral persistence |
+| **Platform support** | Single-platform (usually Claude Code) | Claude Code, OpenCode, Codex — one memory across all |
+| **Multi-agent** | None or basic parallelism | Spawn, heartbeat, crash recovery, inter-agent messaging, shared scratchpad |
+| **Rules enforcement** | Markdown files the model may ignore | RULES.md policy engine — guard LLM blocks unauthorized actions before they reach the model |
+| **Procedural memory** | Tools defined by developers, not agents | Agent-written caps — one file, no server, auto-injected, sandboxed JS/Bash |
+| **Self-maintenance** | Manual pruning required | Auto-quarantine bad learnings, decay stale ones, detect fixation loops |
+| **Scheduled automation** | Cloud-only (vendor lock-in) | Self-hosted cron scheduler — agent, headless, or bash modes |
+| **Integration** | Custom hooks, config files | `yesmem setup` — one command, zero config |
+| **Data location** | Cloud/hybrid | Local only (`~/.claude/yesmem/`) |
+| **Search** | Keyword OR semantic | Hybrid BM25 + 512d vectors, Reciprocal Rank Fusion |
+| **Architecture** | Python/Node service + dependencies | Single Go binary, no CGo, no runtime dependencies |
+| **Code understanding** | None or external tools | Pre-built code graph, graph-first steering, worktree-aware indexing |
+| **Validation** | Unverified claims | LoCoMo benchmark (0.87), published methodology, reproducible |
+
+## Foundations
 
 - **Find anything:** full-text + semantic search combined (BM25 + 512d vectors, Reciprocal Rank Fusion)
 - **Your words matter most,** 4-tier trust hierarchy: `user_stated` > `agreed_upon` > `claude_suggested` > `llm_extracted`
@@ -64,17 +96,6 @@ That's where you start. Not from zero. From where it matters.
 - **Your data stays yours,** everything in `~/.claude/yesmem/`. Nothing leaves your machine.
 - **Free:** FSL-1.1-ALv2. Use it for anything except building a competing product. After 2 years, Apache 2.0.
 
-
-### Windows (via WSL2)
-
-YesMem runs natively on Linux and macOS. On Windows, install Claude Code inside [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and use the Linux binary — everything works identically (Unix sockets, daemon, proxy, hooks). Native Windows support is not available yet.
-
-### Build from source
-
-```bash
-make install    # Build + install to ~/.local/bin/yesmem
-yesmem setup    # Configure MCP server, hooks, proxy, services
-```
 
 ## Architecture
 
@@ -154,27 +175,6 @@ The proxy is **optional**. YesMem works fully without it — all MCP tools, brie
 - **Caps-powered automation** — scheduled agents activate and run caps for predictable, repeatable tasks
 - **Persistent results** — output stored in scratchpad and cap_store, not lost between runs
 - **Self-hosted alternative** to Anthropic Cloud Routines — runs locally with full memory, MCP, and file access
-
-## How YesMem Differs
-
-| Capability | Typical memory tools | YesMem |
-|---|---|---|
-| **Knowledge lifecycle** | Append-only, manual cleanup | Auto-supersede, decay, contradiction detection |
-| **Trust model** | All sources equal | 4-tier hierarchy (user > agreed > suggested > extracted) |
-| **Context management** | External RAG or full rewrite | Transparent proxy — lossless collapse, prompt cache exploitation |
-| **Cross-session continuity** | Session-isolated, no persona | Persona engine (50+ traits), immersive handovers, behavioral persistence |
-| **Platform support** | Single-platform (usually Claude Code) | Claude Code, OpenCode, Codex — one memory across all |
-| **Multi-agent** | None or basic parallelism | Spawn, heartbeat, crash recovery, inter-agent messaging, shared scratchpad |
-| **Rules enforcement** | Markdown files the model may ignore | RULES.md policy engine — guard LLM blocks unauthorized actions before they reach the model |
-| **Procedural memory** | Tools defined by developers, not agents | Agent-written caps — one file, no server, auto-injected, sandboxed JS/Bash |
-| **Self-maintenance** | Manual pruning required | Auto-quarantine bad learnings, decay stale ones, detect fixation loops |
-| **Scheduled automation** | Cloud-only (vendor lock-in) | Self-hosted cron scheduler — agent, headless, or bash modes |
-| **Integration** | Custom hooks, config files | `yesmem setup` — one command, zero config |
-| **Data location** | Cloud/hybrid | Local only (`~/.claude/yesmem/`) |
-| **Search** | Keyword OR semantic | Hybrid BM25 + 512d vectors, Reciprocal Rank Fusion |
-| **Architecture** | Python/Node service + dependencies | Single Go binary, no CGo, no runtime dependencies |
-| **Code understanding** | None or external tools | Pre-built code graph, graph-first steering, worktree-aware indexing |
-| **Validation** | Unverified claims | LoCoMo benchmark (0.87), published methodology, reproducible |
 
 ## Benchmarks
 
