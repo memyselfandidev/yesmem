@@ -7,22 +7,24 @@ import (
 	"testing"
 )
 
-func TestNormalizeOpenAIResponsesURL(t *testing.T) {
+func TestNormalizeOpenAIChatURL(t *testing.T) {
 	tests := []struct {
 		in   string
 		want string
 	}{
-		{"", defaultOpenAIResponsesURL},
-		{"https://example.test", "https://example.test/v1/responses"},
-		{"https://example.test/", "https://example.test/v1/responses"},
-		{"https://example.test/v1", "https://example.test/v1/responses"},
-		{"https://example.test/v1/responses", "https://example.test/v1/responses"},
+		{"", defaultOpenAIChatURL},
+		{"https://example.test", "https://example.test/v1/chat/completions"},
+		{"https://example.test/", "https://example.test/v1/chat/completions"},
+		{"https://example.test/v1", "https://example.test/v1/chat/completions"},
+		{"https://example.test/v1/chat/completions", "https://example.test/v1/chat/completions"},
 	}
 
 	for _, tt := range tests {
-		if got := normalizeOpenAIResponsesURL(tt.in); got != tt.want {
-			t.Errorf("normalizeOpenAIResponsesURL(%q) = %q, want %q", tt.in, got, tt.want)
-		}
+		t.Run(tt.in, func(t *testing.T) {
+			if got := normalizeOpenAIChatURL(tt.in); got != tt.want {
+				t.Errorf("normalizeOpenAIChatURL(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -38,7 +40,7 @@ func TestOpenAIClientCompleteJSON(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"output_text":"{\"ok\":true}","usage":{"input_tokens":12,"output_tokens":7}}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"}}],"usage":{"prompt_tokens":12,"completion_tokens":7}}`))
 	}))
 	defer srv.Close()
 
@@ -73,41 +75,42 @@ func TestOpenAIClientCompleteJSON(t *testing.T) {
 	if gotAuth != "Bearer sk-openai" {
 		t.Fatalf("Authorization = %q", gotAuth)
 	}
-	if gotPath != "/v1/responses" {
-		t.Fatalf("path = %q, want /v1/responses", gotPath)
+	if gotPath != "/v1/chat/completions" {
+		t.Fatalf("path = %q, want /v1/chat/completions", gotPath)
 	}
 	if gotBody["model"] != "gpt-5-mini" {
 		t.Fatalf("model = %#v", gotBody["model"])
 	}
-	if gotBody["instructions"] != "system prompt" {
-		t.Fatalf("instructions = %#v", gotBody["instructions"])
+
+	msgs, ok := gotBody["messages"].([]any)
+	if !ok {
+		t.Fatalf("messages missing or not an array: %#v", gotBody["messages"])
 	}
-	if gotBody["input"] != "user prompt" {
-		t.Fatalf("input = %#v", gotBody["input"])
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
 	}
-	if gotBody["max_output_tokens"] != float64(321) {
-		t.Fatalf("max_output_tokens = %#v", gotBody["max_output_tokens"])
+	first, ok := msgs[0].(map[string]any)
+	if !ok || first["role"] != "system" || first["content"] != "system prompt" {
+		t.Fatalf("first message = %#v", first)
+	}
+	second, ok := msgs[1].(map[string]any)
+	if !ok || second["role"] != "user" || second["content"] != "user prompt" {
+		t.Fatalf("second message = %#v", second)
+	}
+
+	if gotBody["max_tokens"] != float64(321) {
+		t.Fatalf("max_tokens = %#v, want 321", gotBody["max_tokens"])
 	}
 	if gotBody["store"] != false {
 		t.Fatalf("store = %#v, want false", gotBody["store"])
 	}
 
-	textCfg, ok := gotBody["text"].(map[string]any)
+	respFmt, ok := gotBody["response_format"].(map[string]any)
 	if !ok {
-		t.Fatalf("text config missing: %#v", gotBody["text"])
+		t.Fatalf("response_format missing: %#v", gotBody["response_format"])
 	}
-	format, ok := textCfg["format"].(map[string]any)
-	if !ok {
-		t.Fatalf("format missing: %#v", textCfg["format"])
-	}
-	if format["type"] != "json_schema" {
-		t.Fatalf("format.type = %#v", format["type"])
-	}
-	if format["name"] != "yesmem_output" {
-		t.Fatalf("format.name = %#v", format["name"])
-	}
-	if format["strict"] != true {
-		t.Fatalf("format.strict = %#v", format["strict"])
+	if respFmt["type"] != "json_schema" {
+		t.Fatalf("response_format.type = %#v", respFmt["type"])
 	}
 
 	if usageModel != "gpt-5-mini" || usageIn != 12 || usageOut != 7 {
@@ -115,28 +118,20 @@ func TestOpenAIClientCompleteJSON(t *testing.T) {
 	}
 }
 
-func TestOpenAIClientFallsBackToOutputParts(t *testing.T) {
+func TestOpenAIClientComplete(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"output_text":"",
-			"output":[
-				{"type":"message","content":[
-					{"type":"output_text","text":"first"},
-					{"type":"output_text","text":"second"}
-				]}
-			]
-		}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hello world"}}]}`))
 	}))
 	defer srv.Close()
 
-	client := NewOpenAIClient("sk-openai", "gpt-5-mini", srv.URL, "openai")
+	client := NewOpenAIClient("sk-openai", "deepseek-chat", srv.URL, "openai")
 	out, err := client.Complete("system", "user")
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
 	}
-	if out != "first\nsecond" {
-		t.Fatalf("Complete() = %q, want %q", out, "first\nsecond")
+	if out != "hello world" {
+		t.Fatalf("Complete() = %q, want %q", out, "hello world")
 	}
 }
 

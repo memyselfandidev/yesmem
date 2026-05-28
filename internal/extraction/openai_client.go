@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-const defaultOpenAIResponsesURL = "https://api.openai.com/v1/responses"
+const defaultOpenAIChatURL = "https://api.openai.com/v1/chat/completions"
 
-// OpenAIClient is a minimal Responses API client used for extraction workloads.
+// OpenAIClient is a minimal OpenAI Chat Completions API client used for extraction workloads.
 type OpenAIClient struct {
 	apiKey     string
 	model      string
@@ -28,7 +28,7 @@ func NewOpenAIClient(apiKey, model, baseURL, name string) *OpenAIClient {
 	return &OpenAIClient{
 		apiKey:   apiKey,
 		model:    model,
-		endpoint: normalizeOpenAIResponsesURL(baseURL),
+		endpoint: normalizeOpenAIChatURL(baseURL),
 		name:     name,
 		httpClient: &http.Client{
 			Timeout: 120 * time.Second,
@@ -44,59 +44,65 @@ func (c *OpenAIClient) Complete(system, userMessage string, opts ...CallOption) 
 }
 
 func (c *OpenAIClient) CompleteJSON(system, userMessage string, schema map[string]any, opts ...CallOption) (string, error) {
-	strict := true
-	return c.doRequest(system, userMessage, &openAITextConfig{
-		Format: &openAIResponseFormat{
-			Type:        "json_schema",
-			Name:        "yesmem_output",
-			Schema:      schema,
-			Strict:      &strict,
-			Description: "Structured extraction output for yesmem.",
+	// DeepSeek doesn't support "json_schema" response_format, fall back to "json_object"
+	if strings.Contains(c.model, "deepseek") {
+		return c.doRequest(system, userMessage, &openAIResponseFormat{
+			Type: "json_object",
+		}, opts...)
+	}
+	return c.doRequest(system, userMessage, &openAIResponseFormat{
+		Type: "json_schema",
+		JSONSchema: &openAIJSONSchema{
+			Name:   "yesmem_output",
+			Schema: schema,
+			Strict: true,
 		},
 	}, opts...)
 }
 
-type openAIResponsesRequest struct {
-	Model           string            `json:"model"`
-	Input           any               `json:"input"`
-	Instructions    string            `json:"instructions,omitempty"`
-	MaxOutputTokens int               `json:"max_output_tokens,omitempty"`
-	Store           *bool             `json:"store,omitempty"`
-	Text            *openAITextConfig `json:"text,omitempty"`
+// --- Request types (Chat Completions API) ---
+
+type openAIChatRequest struct {
+	Model          string                `json:"model"`
+	Messages       []openAIChatMessage   `json:"messages"`
+	MaxTokens      int                   `json:"max_tokens,omitempty"`
+	Store          *bool                 `json:"store,omitempty"`
+	ResponseFormat *openAIResponseFormat `json:"response_format,omitempty"`
 }
 
-type openAITextConfig struct {
-	Format *openAIResponseFormat `json:"format,omitempty"`
+type openAIChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
+// openAIResponseFormat matches Chat Completions API response_format structure.
+// For json_schema: {type:"json_schema", json_schema:{name,schema,strict}}
 type openAIResponseFormat struct {
-	Type        string         `json:"type"`
-	Name        string         `json:"name,omitempty"`
-	Schema      map[string]any `json:"schema,omitempty"`
-	Description string         `json:"description,omitempty"`
-	Strict      *bool          `json:"strict,omitempty"`
+	Type       string             `json:"type"`
+	JSONSchema *openAIJSONSchema  `json:"json_schema,omitempty"`
 }
 
-type openAIResponsesResponse struct {
-	OutputText string                   `json:"output_text"`
-	Output     []openAIResponsesMessage `json:"output"`
-	Usage      *openAIResponsesUsage    `json:"usage,omitempty"`
-	Error      *openAIErrorEnvelope     `json:"error,omitempty"`
+type openAIJSONSchema struct {
+	Name   string         `json:"name"`
+	Schema map[string]any `json:"schema"`
+	Strict bool           `json:"strict"`
 }
 
-type openAIResponsesMessage struct {
-	Type    string                  `json:"type"`
-	Content []openAIResponsesPart   `json:"content,omitempty"`
+// --- Response types (Chat Completions API) ---
+
+type openAIChatResponse struct {
+	Choices []openAIChatChoice  `json:"choices"`
+	Usage   *openAIUsage        `json:"usage,omitempty"`
+	Error   *openAIErrorEnvelope `json:"error,omitempty"`
 }
 
-type openAIResponsesPart struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
+type openAIChatChoice struct {
+	Message openAIChatMessage `json:"message"`
 }
 
-type openAIResponsesUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+type openAIUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
 }
 
 type openAIErrorEnvelope struct {
@@ -104,16 +110,24 @@ type openAIErrorEnvelope struct {
 	Message string `json:"message"`
 }
 
-func (c *OpenAIClient) doRequest(system, userMessage string, textCfg *openAITextConfig, opts ...CallOption) (string, error) {
+// --- Request execution ---
+
+func (c *OpenAIClient) doRequest(system, userMessage string, respFmt *openAIResponseFormat, opts ...CallOption) (string, error) {
 	o := applyOpts(opts)
 	store := false
-	body := openAIResponsesRequest{
-		Model:           c.model,
-		Input:           userMessage,
-		Instructions:    system,
-		MaxOutputTokens: o.maxTokens,
-		Store:           &store,
-		Text:            textCfg,
+
+	messages := []openAIChatMessage{}
+	if system != "" {
+		messages = append(messages, openAIChatMessage{Role: "system", Content: system})
+	}
+	messages = append(messages, openAIChatMessage{Role: "user", Content: userMessage})
+
+	body := openAIChatRequest{
+		Model:          c.model,
+		Messages:       messages,
+		MaxTokens:      o.maxTokens,
+		Store:          &store,
+		ResponseFormat: respFmt,
 	}
 
 	jsonBody, err := json.Marshal(body)
@@ -139,7 +153,7 @@ func (c *OpenAIClient) doRequest(system, userMessage string, textCfg *openAIText
 		return "", fmt.Errorf("read response: %w", err)
 	}
 
-	var apiResp openAIResponsesResponse
+	var apiResp openAIChatResponse
 	if err := json.Unmarshal(respBody, &apiResp); err != nil {
 		return "", fmt.Errorf("unmarshal response: %w", err)
 	}
@@ -154,44 +168,37 @@ func (c *OpenAIClient) doRequest(system, userMessage string, textCfg *openAIText
 		return "", fmt.Errorf("api error: %s: %s", apiResp.Error.Type, apiResp.Error.Message)
 	}
 
-	result := strings.TrimSpace(apiResp.OutputText)
-	if result == "" {
-		var parts []string
-		for _, item := range apiResp.Output {
-			if item.Type != "message" {
-				continue
-			}
-			for _, part := range item.Content {
-				if part.Type == "output_text" && strings.TrimSpace(part.Text) != "" {
-					parts = append(parts, part.Text)
-				}
-			}
+	result := ""
+	for _, choice := range apiResp.Choices {
+		if strings.TrimSpace(choice.Message.Content) != "" {
+			result = choice.Message.Content
+			break
 		}
-		result = strings.TrimSpace(strings.Join(parts, "\n"))
 	}
+	result = strings.TrimSpace(result)
 	if result == "" {
 		return "", fmt.Errorf("empty response")
 	}
 
 	if OnUsage != nil && apiResp.Usage != nil {
-		OnUsage(c.model, apiResp.Usage.InputTokens, apiResp.Usage.OutputTokens)
+		OnUsage(c.model, apiResp.Usage.PromptTokens, apiResp.Usage.CompletionTokens)
 	}
 
 	return result, nil
 }
 
-func normalizeOpenAIResponsesURL(baseURL string) string {
+func normalizeOpenAIChatURL(baseURL string) string {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
-		return defaultOpenAIResponsesURL
+		return defaultOpenAIChatURL
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 	switch {
-	case strings.HasSuffix(baseURL, "/responses"):
+	case strings.HasSuffix(baseURL, "/chat/completions"):
 		return baseURL
 	case strings.HasSuffix(baseURL, "/v1"):
-		return baseURL + "/responses"
+		return baseURL + "/chat/completions"
 	default:
-		return baseURL + "/v1/responses"
+		return baseURL + "/v1/chat/completions"
 	}
 }
