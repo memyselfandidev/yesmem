@@ -371,7 +371,7 @@ func (h *Handler) handleRelayAgent(params map[string]any) Response {
 		return errorResponse(err.Error())
 	}
 
-	if agent.Status != "running" {
+	if agent.Status != "running" && agent.Status != "frozen" {
 		return errorResponse(fmt.Sprintf("agent %s is %s, not running", agent.ID, agent.Status))
 	}
 	if agent.SockPath == "" {
