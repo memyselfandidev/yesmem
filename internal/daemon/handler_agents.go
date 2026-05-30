@@ -379,16 +379,10 @@ func (h *Handler) handleRelayAgent(params map[string]any) Response {
 		return errorResponse(fmt.Sprintf("agent %s has no socket path (not registered yet?)", agent.ID))
 	}
 
-	// Wrap content with RELAY prefix so agent can identify the source
-	caller, _ := params["caller_session"].(string)
-	if caller == "" {
-		caller = "orchestrator"
-	}
-	// Newlines in content would be interpreted as Enter keypresses in the PTY,
-	// splitting the message into fragments. Escape them.
+	// Sanitize: newlines in content would be interpreted as Enter keypresses in
+	// the PTY, splitting the message into fragments. Escape them.
 	sanitized := strings.ReplaceAll(content, "\n", "\\n")
 	sanitized = strings.ReplaceAll(sanitized, "\r", "")
-	wrappedContent := fmt.Sprintf("[RELAY from=%s] %s", caller, sanitized)
 
 	injectPath := agent.SockPath + ".inject"
 	conn, err := net.DialTimeout("unix", injectPath, 3*time.Second)
@@ -397,7 +391,7 @@ func (h *Handler) handleRelayAgent(params map[string]any) Response {
 	}
 	defer conn.Close()
 
-	if _, err := conn.Write([]byte(wrappedContent + "\r")); err != nil {
+	if _, err := conn.Write([]byte(sanitized + "\r")); err != nil {
 		return errorResponse(fmt.Sprintf("write to inject socket: %v", err))
 	}
 
