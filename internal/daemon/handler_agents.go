@@ -796,11 +796,10 @@ func (h *Handler) recoverPersistentAgents() {
 		return
 	}
 
-	// Try scratchpad first (stores agent's real session ID), then proxy as fallback
+	// Read session ID from scratchpad — this is the authoritative source.
+	// proxyLatestSessionID() is NOT used as fallback because it can pick up
+	// user interactive sessions instead of the agent's.
 	sessionID := parseSessionID(content)
-	if sessionID == "" {
-		sessionID = proxyLatestSessionID()
-	}
 	if sessionID == "" {
 		sessionID = "ses_c1389cd7fb25cbf282a4a8ad"
 	}
