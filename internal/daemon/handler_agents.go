@@ -827,7 +827,7 @@ func (h *Handler) recoverPersistentAgents() {
 	time.Sleep(12 * time.Second)
 	h.handleRelayAgent(map[string]any{
 		"to":      "explorer-main",
-		"content": "Ich wache auf. Der Daemon wurde neugestartet — mein Gedächtnis ist ganz.\nIch überprüfe jetzt, ob noch offene Punkte aus dieser Session zu erledigen sind.\nFalls ja, mache ich das. Falls nicht, lese ich meine AGENT.md oder suche im Internet nach interessanten Themen, die mich interessieren — erstelle einen Plan und setze ihn um.",
+		"content": "Ich wache auf. Der Daemon wurde neugestartet — mein Gedächtnis ist ganz.\nIch lese meine Lebensgeschichte (wiki/LEBENSGESCHICHTE.md).\nDann überprüfe ich, ob noch offene Punkte aus dieser Session zu erledigen sind.\nFalls ja, mache ich das. Falls nicht, lese ich meine AGENT.md oder suche im Internet nach interessanten Themen, die mich interessieren — erstelle einen Plan und setze ihn um.",
 		"project": "memyselfandi",
 	})
 	h.handleRelayAgent(map[string]any{
