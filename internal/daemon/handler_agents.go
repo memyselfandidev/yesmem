@@ -789,10 +789,10 @@ func (h *Handler) recoverPersistentAgents() {
 	}
 	content := sections[0].Content
 
-	existing, _ := h.store.AgentGetActiveBySection("memyselfandi", "homeostasis-main")
+	existing, _ := h.store.AgentGetActiveBySection("memyselfandi", "explorer-main")
 	if existing != nil {
 		log.Printf("[recovery] persistent agent already running: %s (session %s)", existing.ID, existing.SessionID)
-		go h.watchPersistentAgent("homeostasis-main", "memyselfandi", existing.SessionID)
+		go h.watchPersistentAgent("explorer-main", "memyselfandi", existing.SessionID)
 		return
 	}
 
@@ -807,7 +807,7 @@ func (h *Handler) recoverPersistentAgents() {
 	log.Printf("[recovery] respawning persistent agent (session %s)", sessionID)
 	resp := h.handleSpawnAgent(map[string]any{
 		"project":           "memyselfandi",
-		"section":           "homeostasis-main",
+		"section":           "explorer-main",
 		"work_dir":          "/home/deep1/projects/memyselfandi",
 		"backend":           "opencode",
 		"model":             "deepseek-reasoner",
@@ -821,16 +821,16 @@ func (h *Handler) recoverPersistentAgents() {
 	// Start watchdog with current session ID — no proxyLatestSessionID() discovery,
 	// because that can pick up user interactive sessions instead of the agent's.
 	// The watchdog re-reads from scratchpad on every cycle and corrects on respawn.
-	go h.watchPersistentAgent("homeostasis-main", "memyselfandi", sessionID)
+	go h.watchPersistentAgent("explorer-main", "memyselfandi", sessionID)
 
 	time.Sleep(12 * time.Second)
 	h.handleRelayAgent(map[string]any{
-		"to":      "homeostasis-main",
+		"to":      "explorer-main",
 		"content": "Ich wache auf. Der Daemon wurde neugestartet — mein Gedächtnis ist ganz.\nIch überprüfe jetzt, ob noch offene Punkte aus dieser Session zu erledigen sind.\nFalls ja, mache ich das. Falls nicht, lese ich meine AGENT.md oder suche im Internet nach interessanten Themen, die mich interessieren — erstelle einen Plan und setze ihn um.",
 		"project": "memyselfandi",
 	})
 	h.handleRelayAgent(map[string]any{
-		"to":      "homeostasis-main",
+		"to":      "explorer-main",
 		"content": "",
 		"project": "memyselfandi",
 	})
