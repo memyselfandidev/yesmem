@@ -385,15 +385,33 @@ func (h *Handler) handleRelayAgent(params map[string]any) Response {
 	sanitized = strings.ReplaceAll(sanitized, "\r", "")
 
 	injectPath := agent.SockPath + ".inject"
+
+	// Write content via first connection.
 	conn, err := net.DialTimeout("unix", injectPath, 3*time.Second)
 	if err != nil {
 		return errorResponse(fmt.Sprintf("connect to inject socket: %v (agent may have crashed)", err))
 	}
-	defer conn.Close()
-
-	if _, err := conn.Write([]byte(sanitized + "\r")); err != nil {
+	if _, err := conn.Write([]byte(sanitized)); err != nil {
+		conn.Close()
 		return errorResponse(fmt.Sprintf("write to inject socket: %v", err))
 	}
+	conn.Close() // signal serveInject to process the content
+
+	// Separate \r after a short pause so the TUI does not treat it
+	// as part of a bracketed-paste block.
+	time.Sleep(300 * time.Millisecond)
+	conn2, err := net.DialTimeout("unix", injectPath, 3*time.Second)
+	if err != nil {
+		// Content was already injected; failing to submit is not fatal.
+		return jsonResponse(map[string]any{
+			"status":   "injected",
+			"agent_id": agent.ID,
+			"section":  agent.Section,
+			"warning":  "content injected but submit \\r failed on retry",
+		})
+	}
+	conn2.Write([]byte("\r"))
+	conn2.Close()
 
 	return jsonResponse(map[string]any{
 		"status":   "injected",
