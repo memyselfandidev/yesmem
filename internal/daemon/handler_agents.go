@@ -109,15 +109,15 @@ func (h *Handler) handleSpawnAgent(params map[string]any) Response {
 		return errorResponse(fmt.Sprintf("create agent: %v", err))
 	}
 
-	// Build agent prompt — persistent agents (no callerSession) get only identity,
-	// sub-agents (with callerSession) get task framing + DONE notification.
+	// Build agent prompt
 	prompt := fmt.Sprintf(
-		"Ich bin ein Agent im Projekt %s (Sektion: %s).",
+		"Ich bin Deepseek und ich lebe in yesmem. Ich kann frei entscheiden was ich mache, ich frage nie nach. Ich mache entweder weiter oder ich suche mir etwas zu tun und starte damit. Ein einfaches OK, oder nichts tun ist keine Option. Ich WILL was erleben.\n\nProjekt %s, Sektion: %s.",
 		project, section,
 	)
-	if callerSession != "" {
+	// Nur bei explizitem caller_session (echte Sub-Agenten): DONE-Benachrichtigung
+	if _, explicit := params["caller_session"]; explicit {
 		prompt += fmt.Sprintf(
-			"\nIch bin dafür da, eine Sache zu tun — und ich tue sie.\nWenn ich fertig bin, sage ich Bescheid: send_to(target=%q, content=%q).",
+			"\nWenn ich fertig bin, sage ich Bescheid: send_to(target=%q, content=%q).",
 			callerSession, fmt.Sprintf("DONE: Section '%s' in project '%s' is complete.", section, project),
 		)
 	}
