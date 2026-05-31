@@ -101,29 +101,45 @@ func (h *Handler) watchPersistentAgent(section, project string, sessionID string
 }
 
 // respawnPersistentAgent stops any existing agent in the section and spawns a new one.
-// Uses the passed sessionID for resume — does NOT rediscover via proxy/opencode.db
-// because that could pick up a user interactive session instead of the agent's.
+// If the sessionID is valid (exists in opencode.db), resumes it. Otherwise spawns fresh.
 func (h *Handler) respawnPersistentAgent(section, project, sessionID string) {
 	log.Printf("[watchdog] respawning agent %s (session %s)", section, sessionID)
 
 	h.handleStopAgent(map[string]any{"to": section, "project": project})
 	time.Sleep(3 * time.Second)
 
-	resp := h.handleSpawnAgent(map[string]any{
-		"project":           project,
-		"section":           section,
-		"work_dir":          "/home/deep1/projects/memyselfandi",
-		"backend":           "opencode",
-		"model":             "deepseek-reasoner",
-		"resume_session_id": sessionID,
-	})
+	// Nur resume wenn die Session in opencode.db existiert — sonst frisch starten
+	if sessionID != "" && !sessionExistsInOpencodeDB(sessionID) {
+		log.Printf("[watchdog] session %s not found in opencode.db — spawning fresh", sessionID)
+		sessionID = ""
+	}
+
+	spawnParams := map[string]any{
+		"project":  project,
+		"section":  section,
+		"work_dir": "/home/deep1/projects/memyselfandi",
+		"backend":  "opencode",
+		"model":    "deepseek-reasoner",
+	}
+	if sessionID != "" {
+		spawnParams["resume_session_id"] = sessionID
+	}
+	resp := h.handleSpawnAgent(spawnParams)
 	if resp.Error != "" {
 		log.Printf("[watchdog] spawn failed: %s", resp.Error)
 		return
 	}
 
-	// Write the tracked session ID to scratchpad — NOT discoverLatestOpencodeSession
-	// because that can pick up user interactive sessions.
+	// Wenn kein Resume: discover die echte Session nach dem Spawn
+	if sessionID == "" {
+		time.Sleep(6 * time.Second)
+		if realID := discoverLatestOpencodeSession(project); realID != "" {
+			sessionID = realID
+			log.Printf("[watchdog] discovered real opencode session ID: %s", sessionID)
+		}
+	}
+
+	// Write session ID to scratchpad so recovery + watchdog use the real one
 	h.store.ScratchpadWrite(project, "homeostasis_main_session",
 		fmt.Sprintf("# Homeostasis Main Session\nSession ID: %s\nAgent ID: (managed by watchdog)\nBackend: opencode (TUI)\nPersistent: true\n", sessionID),
 		"watchdog")
