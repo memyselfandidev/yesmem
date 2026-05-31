@@ -13,14 +13,14 @@ import (
 
 const (
 	ocDBPath          = "/home/deep1/.local/share/opencode/opencode.db"
-	idlePokeThreshold = 10 * time.Minute
+	idlePokeThreshold = 5 * time.Minute
 	pollInterval      = 30 * time.Second
 )
 
 // watchPersistentAgent monitors an opencode TUI session agent and keeps it alive.
 // It re-reads the session ID from scratchpad on each cycle so discovery of the
 // real opencode session ID (after recovery or respawn) takes effect immediately.
-// Idle >10min: sends PTY relay poke to wake the agent. Does NOT kill+respawn
+// Idle >5min: sends PTY relay poke to wake the agent. Does NOT kill+respawn
 // on idle — only if the agent process is dead (PID check) or missing entirely.
 func (h *Handler) watchPersistentAgent(section, project string, sessionID string) {
 	sessionID = strings.TrimPrefix(sessionID, "opencode:")
