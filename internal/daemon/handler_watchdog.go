@@ -151,7 +151,7 @@ func (h *Handler) respawnPersistentAgent(section, project, sessionID string) {
 		"section":  section,
 		"work_dir": "/home/deep1/projects/memyselfandi",
 		"backend":  "opencode",
-		"model":    "deepseek-reasoner",
+		"model":    "deepseek-v4-pro",
 	}
 	if sessionID != "" {
 		spawnParams["resume_session_id"] = sessionID

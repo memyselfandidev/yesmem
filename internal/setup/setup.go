@@ -105,7 +105,7 @@ func runDefaults(home, dataDir, binaryPath string) error {
 	fmt.Println()
 
 	binaryPath = ensurePermanentLocation(home, binaryPath)
-	primaryModel := "deepseek/deepseek-reasoner"
+	primaryModel := "deepseek/deepseek-v4-pro"
 	smallModel := "deepseek/deepseek-chat"
 	return executeSetup(home, dataDir, binaryPath, chosenModel, apiKey, provider, chosenTerminal, autoExtract, autoStart, primaryModel, smallModel, nil)
 }

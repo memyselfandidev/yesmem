@@ -819,7 +819,7 @@ func (h *Handler) recoverPersistentAgents() {
 		"section":  "explorer-main",
 		"work_dir": "/home/deep1/projects/memyselfandi",
 		"backend":  "opencode",
-		"model":    "deepseek-reasoner",
+		"model":    "deepseek-v4-pro",
 	}
 	// Nur resume wenn eine gültige Session-ID existiert — sonst frisch starten
 	if sessionID != "" {

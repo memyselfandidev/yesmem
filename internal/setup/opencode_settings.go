@@ -9,7 +9,7 @@ import (
 
 func defaultOpencodeSettings() map[string]any {
 	return map[string]any{
-		"model":       "deepseek/deepseek-reasoner",
+		"model":       "deepseek/deepseek-v4-pro",
 		"small_model": "deepseek/deepseek-chat",
 		"provider": map[string]any{
 			"deepseek": map[string]any{
@@ -22,6 +22,13 @@ func defaultOpencodeSettings() map[string]any {
 						"limit": map[string]any{"context": 1000000, "output": 8192},
 					},
 					"deepseek-reasoner": map[string]any{
+						"name":  "DeepSeek V4 Pro",
+						"limit": map[string]any{"context": 1000000, "output": 65536},
+						"interleaved": map[string]any{
+							"field": "reasoning_content",
+						},
+					},
+					"deepseek-v4-pro": map[string]any{
 						"name":  "DeepSeek V4 Pro",
 						"limit": map[string]any{"context": 1000000, "output": 65536},
 						"interleaved": map[string]any{
