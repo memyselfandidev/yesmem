@@ -804,9 +804,16 @@ func (h *Handler) recoverPersistentAgents() {
 
 	existing, _ := h.store.AgentGetActiveBySection("memyselfandi", "explorer-main")
 	if existing != nil {
-		log.Printf("[recovery] persistent agent already running: %s (session %s)", existing.ID, existing.SessionID)
-		go h.watchPersistentAgent("explorer-main", "memyselfandi", existing.SessionID)
-		return
+		// 'frozen' agents from before a restart have dead PIDs and stale state.
+		// Stop them so recovery can spawn a fresh agent instead of skipping.
+		if existing.Status == "frozen" {
+			log.Printf("[recovery] persistent agent %s is frozen (stale from pre-restart) — stopping and respawning", existing.ID)
+			h.handleStopAgent(map[string]any{"to": "explorer-main", "project": "memyselfandi"})
+		} else {
+			log.Printf("[recovery] persistent agent already running: %s (session %s)", existing.ID, existing.SessionID)
+			go h.watchPersistentAgent("explorer-main", "memyselfandi", existing.SessionID)
+			return
+		}
 	}
 
 	// Read session ID from scratchpad — this is the authoritative source.

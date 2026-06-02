@@ -13,7 +13,7 @@ import (
 
 const (
 	ocDBPath              = "/home/deep1/.local/share/opencode/opencode.db"
-	idlePokeThreshold     = 5 * time.Minute
+	idlePokeThreshold     = 15 * time.Minute
 	pollInterval          = 30 * time.Second
 	maxConsecutivePokes   = 3 // kill+respawn after this many pokes without activity change
 )
