@@ -12,6 +12,11 @@ import (
 const (
 	nearDuplicateSimilarity = 0.5
 	nearDuplicateRatio      = 0.6
+
+	// candidateWindow bounds the scan to the most recent gotchas, the same way
+	// the daemon handler bounds its own scan. A near repeat outside the window is
+	// simply not counted — the failure itself is stored either way.
+	candidateWindow = 500
 )
 
 // reinforceRecurringFailure bumps fail_count of an existing gotcha that states
@@ -24,7 +29,7 @@ const (
 // A near repeat is still a repeat: it counts towards that escalation without
 // touching the older row's content, match_count or anything else.
 func reinforceRecurringFailure(store *storage.Store, content string) {
-	existing, err := store.GetActiveLearnings("gotcha", "", "", "", 0)
+	existing, err := store.GetActiveLearnings("gotcha", "", "", "", candidateWindow)
 	if err != nil {
 		return
 	}

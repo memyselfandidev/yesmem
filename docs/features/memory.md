@@ -106,6 +106,8 @@ Manually save knowledge via the MCP tool. Supports structured V2 metadata:
 
 Explicit `supersedes` calls bypass the near-duplicate check.
 
+The failure hooks (`internal/hooks`) follow the same rule from the other side: every distinct tool failure is stored as its own gotcha, an identical repeat reinforces the existing row, and a near repeat of the same failure additionally counts once against that row's `fail_count` — that counter feeds the hard-block escalation. The earlier row's content and `match_count` stay untouched.
+
 **Fresh Remember Injection:** `remember()` MCP returns the learning content as `tool_result`, making it immediately available in the conversation context. The proxy does not re-inject recent learns — the tool result already contains them. The `assemble.go` (OpenClaw/HTTP-API) path uses `pop_recent_remember` for non-MCP environments where `tool_result` feedback doesn't exist.
 
 ### 2.3 Source Attribution

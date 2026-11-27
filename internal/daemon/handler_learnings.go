@@ -142,8 +142,9 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 		existing, err := h.store.GetActiveLearnings(category, project, "", "", nearDuplicateScanSet)
 		if err != nil {
 			// Without the candidate list no dedup is possible. Storing is the safe
-			// failure; the alternative would be to drop the text unexamined.
-			existing = nil
+			// failure, but it must not happen silently: a broken scan looks exactly
+			// like "nothing similar exists".
+			log.Printf("[remember] candidate scan failed, near-duplicate check skipped: %v", err)
 		}
 		newTokens := textutil.Tokenize(text)
 		var best *models.Learning
@@ -155,18 +156,18 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 			if sim < nearDuplicateThreshold {
 				continue
 			}
-			// Containment alone would let a short note collapse into any long row
-			// that contains its tokens (measured on the live DB: a six-token note
-			// matched 145 rows at 1.00). A restatement is comparable in size, so a
-			// fragment of a much longer entry is neither a duplicate nor a
-			// correction — it is simply stored.
-			if textutil.TokenLengthRatio(newTokens, eTokens) < nearDuplicateLengthRatio {
-				continue
-			}
 			if textutil.IsContradiction(newTokens, eTokens) {
 				if contradicted == nil || sim > contradictedSim {
 					contradicted, contradictedSim = e, sim
 				}
+				continue
+			}
+			// Containment alone would let a short note collapse into any long row
+			// that contains its tokens (measured on the live DB: a six-token note
+			// matched 145 rows at 1.00). A restatement is comparable in size, so a
+			// fragment of a much longer entry is not a near-duplicate — the guard
+			// applies to the rejection only, never to a detected correction.
+			if textutil.TokenLengthRatio(newTokens, eTokens) < nearDuplicateLengthRatio {
 				continue
 			}
 			if best == nil || sim > bestSim {
