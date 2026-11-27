@@ -115,15 +115,14 @@ func learnFromAnyFailure(dataDir string, hook *FailureInput, toolContext string)
 	}
 	defer store.Close()
 
-	existing, _ := store.GetActiveLearnings("gotcha", "", "", "", 0)
-	newTokens := textutil.Tokenize(content)
-
-	for _, g := range existing {
-		if textutil.TokenSimilarity(newTokens, textutil.Tokenize(g.Content)) >= 0.5 {
-			store.IncrementMatchCounts([]int64{g.ID})
-			store.IncrementFailCounts([]int64{g.ID})
-			return
-		}
+	// Dedup on byte-identical content only. The previous >= 0.5 containment rule
+	// dropped failures whose tool context is identical and whose error text is
+	// the new information, and bumped the counters of the older row instead. An
+	// identical repeat is one observation and still feeds both counters.
+	if existing, err := store.GetLearningByContentHash(textutil.ContentHash(content)); err == nil && existing != nil {
+		store.IncrementMatchCounts([]int64{existing.ID})
+		store.IncrementFailCounts([]int64{existing.ID})
+		return
 	}
 
 	store.InsertLearning(&models.Learning{
