@@ -72,10 +72,19 @@ func RunLearn(dataDir string) {
 	// same command with a different error raised the match_count of the first
 	// error and dropped the second one. An identical repeat is still one
 	// observation and still reinforces the row; anything else is new.
-	if existing, err := store.GetLearningByContentHash(textutil.ContentHash(content)); err == nil && existing != nil {
+	existing, err := store.GetLearningByContentHash(textutil.ContentHash(content))
+	if err != nil {
+		// A failed lookup must not turn into a blind insert: report and keep the
+		// hook silent instead of guessing.
+		fmt.Fprintf(os.Stderr, "yesmem hook: dedup lookup failed: %v\n", err)
+		return
+	}
+	if existing != nil {
 		store.IncrementMatchCounts([]int64{existing.ID})
 		return
 	}
+
+	reinforceRecurringFailure(store, content)
 
 	learning := &models.Learning{
 		SessionID:  hook.SessionID,

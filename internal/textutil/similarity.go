@@ -24,6 +24,25 @@ func Tokenize(s string) []string {
 	return tokens
 }
 
+// TokenLengthRatio returns the ratio of the shorter token count to the longer
+// one (1.0 for equal lengths, 0 for an empty side).
+//
+// It exists because TokenSimilarity is a containment measure: a six-token note
+// scores 1.0 against any long row that happens to contain those six tokens. The
+// ratio keeps a fragment from being treated as a restatement of a long text,
+// which is the difference between "same statement, different words" and "a
+// fragment of a much larger entry".
+func TokenLengthRatio(a, b []string) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	shorter, longer := len(a), len(b)
+	if shorter > longer {
+		shorter, longer = longer, shorter
+	}
+	return float64(shorter) / float64(longer)
+}
+
 // TokenSimilarity computes containment similarity (fraction of shorter set found in longer).
 func TokenSimilarity(a, b []string) float64 {
 	if len(a) == 0 || len(b) == 0 {

@@ -95,9 +95,16 @@ Manually save knowledge via the MCP tool. Supports structured V2 metadata:
 | `domain` | `code`, `marketing`, `legal`, `finance`, `general` |
 | `task_type` | Only for `unfinished`: `task`, `idea`, `blocked`, `stale` |
 | `anticipated_queries` | 3-5 concrete search phrases for better vector retrieval |
+| `force` | Store even when the text looks like a near-duplicate of an existing learning |
 | `model` | Optional: exact model of the calling agent |
 
-**Pre-Admission Dedup:** Before inserting, `remember()` checks via TokenSimilarity (Jaccard ≥ 0.5) if a similar learning already exists. If yes: bumps `match_count` instead of creating a duplicate. Explicit `supersedes` calls bypass this check.
+**Near-duplicate admission:** Before inserting, `remember()` compares the text with the recent learnings of the same category and project (token containment similarity ≥ 0.5, both texts comparable in size). The call is never discarded silently — one of three outcomes is reported:
+
+- **Correction** (the new text negates the existing one): it is stored, the response names the entry it contradicts (`contradicts`), and a `contradicts` edge is recorded. The corrected entry itself stays untouched.
+- **Near-duplicate**: rejected explicitly with `stored=false`, `duplicate_of` and `similarity`. Nothing is written and `match_count` of the existing entry is **not** bumped. Pass `force=true` to store the text anyway, or `supersedes=<id>` if it replaces the entry.
+- **Byte-identical text**: reported as known (`stored=false`, "identical text"); `match_count` is bumped because the text is already in the memory verbatim.
+
+Explicit `supersedes` calls bypass the near-duplicate check.
 
 **Fresh Remember Injection:** `remember()` MCP returns the learning content as `tool_result`, making it immediately available in the conversation context. The proxy does not re-inject recent learns — the tool result already contains them. The `assemble.go` (OpenClaw/HTTP-API) path uses `pop_recent_remember` for non-MCP environments where `tool_result` feedback doesn't exist.
 

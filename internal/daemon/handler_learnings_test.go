@@ -93,8 +93,8 @@ func TestHandleRememberAcceptsAnticipatedQueries(t *testing.T) {
 		Method: "remember",
 		Params: map[string]any{
 			"text":                "Reddit gibt 403 bei WebFetch",
-			"category":           "gotcha",
-			"project":            "yesmem",
+			"category":            "gotcha",
+			"project":             "yesmem",
 			"anticipated_queries": []any{"reddit 403", "webfetch blocked", "curl workaround reddit"},
 		},
 	})
@@ -440,6 +440,9 @@ func TestHandleRelateHappyPath(t *testing.T) {
 	json.Unmarshal(resp2.Result, &r2)
 	idA := r1["id"].(float64)
 	idB := r2["id"].(float64)
+	if idA == idB {
+		t.Fatalf("fixture broken: both remember() calls returned id %v — the relation would be self-referential", idA)
+	}
 
 	resp := h.Handle(Request{
 		Method: "relate_learnings",
@@ -526,6 +529,10 @@ func TestHandleRelateAllValidTypes(t *testing.T) {
 				"relation_type": relType,
 			},
 		})
+
+		if r1["id"] == r2["id"] {
+			t.Fatalf("relation_type %q: fixture broken — both remember() calls returned the same id", relType)
+		}
 
 		if resp.Error != "" {
 			t.Fatalf("relation_type %q: unexpected error: %s", relType, resp.Error)

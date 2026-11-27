@@ -119,11 +119,18 @@ func learnFromAnyFailure(dataDir string, hook *FailureInput, toolContext string)
 	// dropped failures whose tool context is identical and whose error text is
 	// the new information, and bumped the counters of the older row instead. An
 	// identical repeat is one observation and still feeds both counters.
-	if existing, err := store.GetLearningByContentHash(textutil.ContentHash(content)); err == nil && existing != nil {
+	existing, err := store.GetLearningByContentHash(textutil.ContentHash(content))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "yesmem hook: dedup lookup failed: %v\n", err)
+		return
+	}
+	if existing != nil {
 		store.IncrementMatchCounts([]int64{existing.ID})
 		store.IncrementFailCounts([]int64{existing.ID})
 		return
 	}
+
+	reinforceRecurringFailure(store, content)
 
 	store.InsertLearning(&models.Learning{
 		SessionID:  hook.SessionID,

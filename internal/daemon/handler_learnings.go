@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -134,7 +135,16 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 	var forcedOver *models.Learning
 	var forcedOverSim float64
 	if supersedesID == 0 {
-		existing, _ := h.store.GetActiveLearnings(category, project, "", "", 0)
+		// The candidate window is bounded to the most recent nearDuplicateScanSet
+		// learnings of this category and project. A duplicate outside the window is
+		// stored instead of rejected — the safe direction: a stored duplicate costs
+		// a row, a swallowed text costs the memory.
+		existing, err := h.store.GetActiveLearnings(category, project, "", "", nearDuplicateScanSet)
+		if err != nil {
+			// Without the candidate list no dedup is possible. Storing is the safe
+			// failure; the alternative would be to drop the text unexamined.
+			existing = nil
+		}
 		newTokens := textutil.Tokenize(text)
 		var best *models.Learning
 		var bestSim float64
@@ -143,6 +153,14 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 			eTokens := textutil.Tokenize(e.Content)
 			sim := textutil.TokenSimilarity(newTokens, eTokens)
 			if sim < nearDuplicateThreshold {
+				continue
+			}
+			// Containment alone would let a short note collapse into any long row
+			// that contains its tokens (measured on the live DB: a six-token note
+			// matched 145 rows at 1.00). A restatement is comparable in size, so a
+			// fragment of a much longer entry is neither a duplicate nor a
+			// correction — it is simply stored.
+			if textutil.TokenLengthRatio(newTokens, eTokens) < nearDuplicateLengthRatio {
 				continue
 			}
 			if textutil.IsContradiction(newTokens, eTokens) {
@@ -161,6 +179,9 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 		case best != nil && force:
 			forcedOver, forcedOverSim = best, bestSim
 		case best != nil:
+			// A rejection is a real event of the memory: log it so the rate is
+			// observable, and answer with the reason plus the way forward.
+			log.Printf("[remember] not stored: near-duplicate of #%d (similarity %.2f, length ratio ok)", best.ID, bestSim)
 			return jsonResponse(map[string]any{
 				"id":           int64(0),
 				"stored":       false,
@@ -176,6 +197,14 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 	id, err := h.store.InsertLearning(l)
 	if err != nil {
 		return errorResponse(err.Error())
+	}
+
+	// A correction is a statement about two entries, not just one: record the
+	// 'contradicts' edge so the chain survives the response. The corrected entry
+	// itself stays untouched (no supersede, no noise, no counters).
+	contradictionRelationErr := error(nil)
+	if contradicted != nil {
+		contradictionRelationErr = h.store.InsertTypedAssociation(id, contradicted.ID, "contradicts")
 	}
 
 	// If superseding an old learning, check trust level first
@@ -256,8 +285,12 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 		// it corrects. Naming the entry keeps the chain readable in the response.
 		resp["contradicts"] = contradicted.ID
 		resp["similarity"] = contradictedSim
-		resp["message"] = fmt.Sprintf("Learning #%d saved (%s, model=%s). Stored although it is %.2f similar to #%d: the two texts have opposite polarity, so this is a correction, not a duplicate. #%d was left untouched.%s",
-			id, category, l.ModelUsed, contradictedSim, contradicted.ID, contradicted.ID, supersededMsg)
+		correctionNote := ""
+		if contradictionRelationErr != nil {
+			correctionNote = fmt.Sprintf(" The contradicts edge to #%d could not be recorded: %v.", contradicted.ID, contradictionRelationErr)
+		}
+		resp["message"] = fmt.Sprintf("Learning #%d saved (%s, model=%s). Stored although it is %.2f similar to #%d: the two texts have opposite polarity, so this is a correction, not a duplicate. #%d was left untouched.%s%s",
+			id, category, l.ModelUsed, contradictedSim, contradicted.ID, contradicted.ID, correctionNote, supersededMsg)
 	case forcedOver != nil:
 		resp["duplicate_of"] = forcedOver.ID
 		resp["similarity"] = forcedOverSim
@@ -275,6 +308,18 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 // not silence the call: the text is stored (opposing polarity, force=true) or the
 // call is rejected with an explicit reason and the entry it collided with.
 const nearDuplicateThreshold = 0.5
+
+// nearDuplicateLengthRatio is the minimum length ratio (shorter tokens / longer
+// tokens) for the two texts to count as the same statement. Containment
+// similarity alone scores a short note 1.0 against every long entry containing
+// its tokens; requiring comparable size keeps that from blocking a write.
+const nearDuplicateLengthRatio = 0.6
+
+// nearDuplicateScanSet bounds the candidate window: the most recent 500
+// learnings of the category and project. A duplicate outside the window is
+// stored rather than rejected — a stored duplicate costs a row, a swallowed
+// text costs the memory.
+const nearDuplicateScanSet = 500
 
 func rememberModel(params map[string]any) string {
 	if model, ok := params["model"].(string); ok && strings.TrimSpace(model) != "" {

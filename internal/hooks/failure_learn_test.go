@@ -50,9 +50,34 @@ func TestLearnFromAnyFailureKeepsDistinctFailures(t *testing.T) {
 	}
 }
 
-// TestLearnFromAnyFailureDeduplicatesIdenticalFailure keeps the case the old
-// rule got right: an identical failure is one observation and feeds both
-// counters of the existing row.
+// TestLearnFromAnyFailureCountsNearRepeatForEscalation keeps the hard-block
+// escalation in check.go alive: it fires on fail_count >= 5 of an
+// auto-learned gotcha, so a near repeat of the same failure must still count as
+// a repeat even though it becomes its own row.
+func TestLearnFromAnyFailureCountsNearRepeatForEscalation(t *testing.T) {
+	dir := t.TempDir()
+
+	learnFromAnyFailure(dir, readFailure("open /repo/main.go: permission denied"), "/repo/main.go")
+	learnFromAnyFailure(dir, readFailure("open /repo/main.go: no such file or directory"), "/repo/main.go")
+
+	rows, err := openHookStore(t, dir).GetActiveLearnings("gotcha", "", "", "", 0)
+	if err != nil {
+		t.Fatalf("get active learnings: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("gotcha rows: got %d, want 2", len(rows))
+	}
+	repeated := 0
+	for _, r := range rows {
+		if r.FailCount > 0 {
+			repeated++
+		}
+	}
+	if repeated != 1 {
+		t.Fatalf("rows carrying a fail_count: got %d, want 1 — the near repeat must count once against the earlier row", repeated)
+	}
+}
+
 func TestLearnFromAnyFailureDeduplicatesIdenticalFailure(t *testing.T) {
 	dir := t.TempDir()
 

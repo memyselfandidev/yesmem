@@ -1,5 +1,7 @@
 package textutil
 
+import "strings"
+
 // negationMarkers are tokens that flip the polarity of a statement. Tokenize()
 // lowercases and splits on punctuation, so contractions arrive in their stem
 // form ("doesn't" becomes "doesn", "isn't" becomes "isn"). The set is
@@ -48,11 +50,18 @@ var negationMarkers = map[string]struct{}{
 // Negated reports whether the token stream carries an explicit negation.
 func Negated(tokens []string) bool {
 	for _, t := range tokens {
-		if _, ok := negationMarkers[t]; ok {
+		if _, ok := negationMarkers[negationKey(t)]; ok {
 			return true
 		}
 	}
 	return false
+}
+
+// negationKey strips the punctuation Tokenize keeps inside a token ('.', '-',
+// '_', '/') so that a sentence-final marker still matches: "nicht." negates
+// exactly like "nicht", and that is the idiomatic form of a correction.
+func negationKey(token string) string {
+	return strings.TrimRight(token, ".-_/")
 }
 
 // IsContradiction reports whether two token streams state opposite things: they
@@ -76,17 +85,19 @@ func IsContradiction(a, b []string) bool {
 func sharedSubstantive(a, b []string) int {
 	set := make(map[string]struct{}, len(b))
 	for _, t := range b {
-		if _, negated := negationMarkers[t]; negated {
+		key := negationKey(t)
+		if _, negated := negationMarkers[key]; negated {
 			continue
 		}
-		set[t] = struct{}{}
+		set[key] = struct{}{}
 	}
 	shared := 0
 	for _, t := range a {
-		if _, negated := negationMarkers[t]; negated {
+		key := negationKey(t)
+		if _, negated := negationMarkers[key]; negated {
 			continue
 		}
-		if _, ok := set[t]; ok {
+		if _, ok := set[key]; ok {
 			shared++
 		}
 	}

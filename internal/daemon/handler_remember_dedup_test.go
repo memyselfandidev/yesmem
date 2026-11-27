@@ -62,68 +62,86 @@ func matchCount(t *testing.T, s *storage.Store, id int64) int {
 	return l.MatchCount
 }
 
-// TestHandleRememberNearDuplicateIsRejectedExplicitly covers mode B (a foreign
-// entry that merely shares vocabulary) and mode C (the caller's own earlier
-// entry on the same topic). Neither may be swallowed: the response has to say
-// that nothing was stored, and match_count of the existing entry must stay put
-// — bumping it strengthens an entry the new text was not about.
+// TestHandleRememberNearDuplicateIsRejectedExplicitly covers mode C: the caller's
+// own earlier entry on the same topic, restated with a little more detail. The
+// texts are comparable in size, so this is a genuine near-duplicate — it may not
+// be swallowed: the response has to say that nothing was stored, and match_count
+// of the existing entry must stay put (bumping it strengthens an entry the new
+// text was not about).
 func TestHandleRememberNearDuplicateIsRejectedExplicitly(t *testing.T) {
-	cases := []struct {
-		name     string
-		existing string
-		newText  string
-	}{
-		{
-			name:     "mode B foreign entry sharing vocabulary",
-			existing: "Verification doctrine (GLOBAL): a claim is only verified when a command proves it; a check without a command is not verification",
-			newText:  "check: claim verification needs a command, not a doctrine",
-		},
-		{
-			name:     "mode C own earlier entry on the same topic",
-			existing: "the daemon restarts on deploy and the schedule keeps running",
-			newText:  "the daemon restarts on deploy and the schedule keeps running until the next tick",
-		},
+	h, s := mustHandler(t)
+	existing := "the daemon restarts on deploy and the schedule keeps running"
+	seedID := seedLearning(t, s, "decision", existing)
+	newText := "the daemon restarts on deploy and the schedule keeps running until the next tick"
+
+	sim := textutil.TokenSimilarity(textutil.Tokenize(newText), textutil.Tokenize(existing))
+	ratio := textutil.TokenLengthRatio(textutil.Tokenize(newText), textutil.Tokenize(existing))
+	if sim < 0.5 || ratio < 0.6 {
+		t.Fatalf("scenario guard: similarity %.2f, length ratio %.2f — case no longer hits the near-duplicate branch", sim, ratio)
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			h, s := mustHandler(t)
-			seedID := seedLearning(t, s, "decision", tc.existing)
+	result := rememberCall(t, h, map[string]any{
+		"text":     newText,
+		"category": "decision",
+		"project":  "yesmem",
+	})
 
-			sim := textutil.TokenSimilarity(textutil.Tokenize(tc.newText), textutil.Tokenize(tc.existing))
-			if sim < 0.5 {
-				t.Fatalf("scenario guard: similarity %.2f < 0.5, this case no longer exercises the dedup threshold", sim)
-			}
+	if stored, ok := result["stored"].(bool); !ok || stored {
+		t.Errorf("stored: got %v (present=%v), want false — the new text was not written", result["stored"], ok)
+	}
+	if got, want := result["duplicate_of"], float64(seedID); got != want {
+		t.Errorf("duplicate_of: got %v, want %v", got, want)
+	}
+	msg, _ := result["message"].(string)
+	if !strings.Contains(msg, "NOT stored") {
+		t.Errorf("message must say the new text was not stored: got %q", msg)
+	}
+	if strings.Contains(msg, "Bumped") {
+		t.Errorf("message must not claim a match_count bump: got %q", msg)
+	}
+	if !strings.Contains(msg, "force=true") {
+		t.Errorf("message must name a way to store the text anyway: got %q", msg)
+	}
+	if got := matchCount(t, s, seedID); got != 0 {
+		t.Errorf("match_count of #%d: got %d, want 0 — a discarded text must not strengthen an entry", seedID, got)
+	}
+	if got := activeLearningCount(t, s, "yesmem"); got != 1 {
+		t.Errorf("active learnings: got %d, want 1 (no silent insert, no duplicate row)", got)
+	}
+}
 
-			result := rememberCall(t, h, map[string]any{
-				"text":     tc.newText,
-				"category": "decision",
-				"project":  "yesmem",
-			})
+// TestHandleRememberShortTextIsNotBlockedByALongEntry covers mode B: a foreign
+// entry that merely shares vocabulary. Containment similarity scores a short note
+// 1.0 against every long entry containing its tokens, which is why the length
+// ratio guards the rejection — here the text is stored, not blocked, and the long
+// entry is not touched.
+func TestHandleRememberShortTextIsNotBlockedByALongEntry(t *testing.T) {
+	h, s := mustHandler(t)
+	existing := "Verification doctrine (GLOBAL): a claim is only verified when a command proves it; a check without a command is not verification"
+	seedID := seedLearning(t, s, "decision", existing)
+	newText := "check: claim verification needs a command, not a doctrine"
 
-			if stored, ok := result["stored"].(bool); !ok || stored {
-				t.Errorf("stored: got %v (present=%v), want false — the new text was not written", result["stored"], ok)
-			}
-			if got, want := result["duplicate_of"], float64(seedID); got != want {
-				t.Errorf("duplicate_of: got %v, want %v", got, want)
-			}
-			msg, _ := result["message"].(string)
-			if !strings.Contains(msg, "NOT stored") {
-				t.Errorf("message must say the new text was not stored: got %q", msg)
-			}
-			if strings.Contains(msg, "Bumped") {
-				t.Errorf("message must not claim a match_count bump: got %q", msg)
-			}
-			if !strings.Contains(msg, "force=true") {
-				t.Errorf("message must name a way to store the text anyway: got %q", msg)
-			}
-			if got := matchCount(t, s, seedID); got != 0 {
-				t.Errorf("match_count of #%d: got %d, want 0 — a discarded text must not strengthen an entry", seedID, got)
-			}
-			if got := activeLearningCount(t, s, "yesmem"); got != 1 {
-				t.Errorf("active learnings: got %d, want 1 (no silent insert, no duplicate row)", got)
-			}
-		})
+	sim := textutil.TokenSimilarity(textutil.Tokenize(newText), textutil.Tokenize(existing))
+	ratio := textutil.TokenLengthRatio(textutil.Tokenize(newText), textutil.Tokenize(existing))
+	if sim < 0.5 || ratio >= 0.6 {
+		t.Fatalf("scenario guard: similarity %.2f, length ratio %.2f — case should be contained but shorter than the ratio guard", sim, ratio)
+	}
+
+	result := rememberCall(t, h, map[string]any{
+		"text":     newText,
+		"category": "decision",
+		"project":  "yesmem",
+	})
+
+	id, _ := result["id"].(float64)
+	if id <= 0 {
+		t.Fatalf("short text was blocked by a long entry: id=%v message=%v", result["id"], result["message"])
+	}
+	if got := matchCount(t, s, seedID); got != 0 {
+		t.Errorf("match_count of #%d: got %d, want 0", seedID, got)
+	}
+	if got := activeLearningCount(t, s, "yesmem"); got != 2 {
+		t.Errorf("active learnings: got %d, want 2 (seeded + stored)", got)
 	}
 }
 
@@ -166,6 +184,22 @@ func TestHandleRememberCorrectionIsStored(t *testing.T) {
 	msg, _ := result["message"].(string)
 	if !strings.Contains(msg, fmt.Sprintf("#%d", oldID)) {
 		t.Errorf("message must name the contradicted entry #%d: got %q", oldID, msg)
+	}
+	if got := result["contradicts"]; got != float64(oldID) {
+		t.Errorf("contradicts: got %v, want %d", got, oldID)
+	}
+
+	// The correction is a statement about two entries: the edge must exist so the
+	// chain survives the response.
+	edges, err := s.GetAssociationsByRelationType("learning", fmt.Sprintf("%d", int64(id)), "contradicts")
+	if err != nil {
+		t.Fatalf("get contradicts edges: %v", err)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("contradicts edges: got %d, want 1 (#%d -> #%d)", len(edges), int64(id), oldID)
+	}
+	if edges[0].TargetID != fmt.Sprintf("%d", oldID) {
+		t.Errorf("edge target: got %s, want %d", edges[0].TargetID, oldID)
 	}
 
 	old, err := s.GetLearning(oldID)

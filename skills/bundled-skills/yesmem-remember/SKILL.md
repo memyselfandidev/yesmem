@@ -27,6 +27,19 @@ Store learnings with structured metadata for better retrieval.
 | `source` | user_stated, agreed_upon, claude_suggested | "agreed_upon" |
 | `project` | Project scope | "yesmem" |
 | `supersedes` | ID of learning this replaces | 12345 |
+| `force` | Store even when the text is a near-duplicate | true |
+
+### What the answer means
+
+`remember()` never drops a text silently. Read the answer before moving on:
+
+| Answer | Meaning |
+|--------|---------|
+| `✓ Learning #N saved` | stored as a new row |
+| `NOT stored … near-duplicate of #N` (`stored=false`) | nothing was written; the response names the entry you collided with |
+| `Already known as #N (identical text)` | the same text is already stored; its `match_count` was bumped |
+
+If the text carries new information that the containment similarity cannot see, repeat the call with `force=true`. If it **corrects** an existing entry, just write it: an opposite-polarity text (e.g. "… ist nicht blind" against "… ist blind") is stored as a correction, numbered against the entry it contradicts, and that entry is left untouched. Use `supersedes=<id>` only when you want the old entry replaced.
 
 ## relate_learnings()
 

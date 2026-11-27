@@ -15,6 +15,10 @@ func TestNegated(t *testing.T) {
 		{"the parser doesn't accept trailing commas", true},
 		{"merging without a proof is guessing", true},
 		{"merging with a proof is fine", false},
+		// Tokenize keeps '.' inside a token, so a sentence-final marker arrives as
+		// "nicht." / "not." — the idiomatic form of a correction.
+		{"das funktioniert nach dem Merge nicht.", true},
+		{"this does not.", true},
 		{"", false},
 	}
 
@@ -40,6 +44,12 @@ func TestIsContradiction(t *testing.T) {
 			name: "german correction adds nicht",
 			a:    "diff_scope ist nach dem Merge blind",
 			b:    "diff_scope ist nach dem Merge nicht blind",
+			want: true,
+		},
+		{
+			name: "sentence-final negation is a negation",
+			a:    "Das funktioniert nach dem Merge.",
+			b:    "Das funktioniert nach dem Merge nicht.",
 			want: true,
 		},
 		{

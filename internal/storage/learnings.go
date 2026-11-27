@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -1200,6 +1201,11 @@ func (s *Store) GetLearningByContentHash(hash string) (*models.Learning, error) 
 		FROM learnings WHERE content_hash = ? AND superseded_by IS NULL LIMIT 1`, hash)
 	var l models.Learning
 	err := row.Scan(&l.ID, &l.Content, &l.Category, &l.Project, &l.MatchCount)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Not found is an answer, not an error: callers dedup on `existing != nil`
+		// and must not mistake a cache miss for a broken database.
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

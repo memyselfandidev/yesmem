@@ -25,6 +25,22 @@ func TestFormatRememberRejectionIsNotRenderedAsSaved(t *testing.T) {
 	}
 }
 
+// TestFormatRememberCorrectionNoteReachesTheCaller pins the other half of the
+// reporting seam: when a correction was stored, the note carries the entry it
+// contradicts — and the model reads only this rendering, not the JSON fields.
+func TestFormatRememberCorrectionNoteReachesTheCaller(t *testing.T) {
+	raw := json.RawMessage(`{"id":4310,"stored":true,"category":"gotcha","project":"yesmem","content":"diff_scope ist nach dem Merge nicht blind","model_used":"self","contradicts":4014,"similarity":0.92,"message":"Learning #4310 saved (gotcha, model=self). Stored although it is 0.92 similar to #4014: the two texts have opposite polarity, so this is a correction, not a duplicate. #4014 was left untouched."}`)
+
+	got := formatRemember(raw)
+
+	if !strings.Contains(got, "Contradicts: #4014") {
+		t.Errorf("correction target missing from the rendering: %q", got)
+	}
+	if !strings.Contains(got, "correction, not a duplicate") {
+		t.Errorf("the note explaining the stored correction is missing: %q", got)
+	}
+}
+
 func TestFormatRememberSavedStillRendersSaved(t *testing.T) {
 	raw := json.RawMessage(`{"id":7,"category":"gotcha","project":"yesmem","content":"the diff shows what changed","model_used":"self","message":"Learning #7 saved (gotcha, model=self)."}`)
 

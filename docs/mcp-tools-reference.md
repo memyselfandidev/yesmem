@@ -15,7 +15,7 @@ Large results (>30K chars) include `_meta.anthropic/maxResultSizeChars` for trun
 ### Learning Management
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `remember` | `text`, `category?`, `project?`, `model?`, `source?`, `origin?`, `supersedes?`, `entities?`, `actions?`, `trigger?`, `anticipated_queries?`, `context?`, `domain?`, `task_type?` | Save a learning for future sessions |
+| `remember` | `text`, `category?`, `project?`, `model?`, `source?`, `origin?`, `supersedes?`, `force?`, `entities?`, `actions?`, `trigger?`, `anticipated_queries?`, `context?`, `domain?`, `task_type?` | Save a learning for future sessions. Near-duplicates are rejected explicitly (`stored=false`); `force=true` stores anyway, opposing polarity is stored as a correction |
 | `get_learnings` | `id?`, `history?`, `category?`, `project?`, `since?`, `before?`, `limit?`, `task_type?` | Retrieve learnings by category or ID |
 | `resolve` | `learning_id`, `reason?` | Resolve an unfinished task |
 | `resolve_by_text` | `text`, `project?` | Find and resolve unfinished task by text |

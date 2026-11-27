@@ -26,11 +26,17 @@ export function failureLearnHook(rpc: YesMemRPC): Record<string, any> {
 
       // Phase 1: Learn
       const truncated = errorOutput.length > 200 ? errorOutput.substring(0, 200) : errorOutput;
+      // force: this hook reports an actual failure, and the error text is the
+      // information. Without it a text that merely shares vocabulary with an
+      // existing learning would come back stored=false and be lost here (this
+      // caller does not read the answer — the Go hooks store it for the same
+      // reason).
       await rpc.call("remember", {
         text: `${tool} error: ${truncated}`,
         category: "gotcha",
         source: "hook_auto_learned",
         project: directory,
+        force: true,
       });
 
       // Phase 2: Assist

@@ -257,17 +257,17 @@ func formatSimpleMessage(raw json.RawMessage) string {
 // formatRemember renders a structured box for remember() responses.
 func formatRemember(raw json.RawMessage) string {
 	var data struct {
-		ID           int64   `json:"id"`
-		Category     string  `json:"category"`
-		Project      string  `json:"project"`
-		Content      string  `json:"content"`
-		ModelUsed    string  `json:"model_used"`
-		SupersedesID int64   `json:"supersedes_id"`
-		Message      string  `json:"message"`
-		Attribution  string  `json:"attribution"`
-		Stored       *bool   `json:"stored"`
-		DuplicateOf  int64   `json:"duplicate_of"`
-		Similarity   float64 `json:"similarity"`
+		ID           int64  `json:"id"`
+		Category     string `json:"category"`
+		Project      string `json:"project"`
+		Content      string `json:"content"`
+		ModelUsed    string `json:"model_used"`
+		SupersedesID int64  `json:"supersedes_id"`
+		Contradicts  int64  `json:"contradicts"`
+		DuplicateOf  int64  `json:"duplicate_of"`
+		Message      string `json:"message"`
+		Attribution  string `json:"attribution"`
+		Stored       *bool  `json:"stored"`
 	}
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return string(raw)
@@ -302,10 +302,23 @@ func formatRemember(raw json.RawMessage) string {
 	if data.SupersedesID > 0 {
 		sb.WriteString(fmt.Sprintf("  Supersedes: #%d\n", data.SupersedesID))
 	}
+	if data.Contradicts > 0 {
+		sb.WriteString(fmt.Sprintf("  Contradicts: #%d\n", data.Contradicts))
+	}
+	if data.DuplicateOf > 0 {
+		sb.WriteString(fmt.Sprintf("  Similar to: #%d\n", data.DuplicateOf))
+	}
 	if data.Attribution != "" {
 		sb.WriteString(fmt.Sprintf("  Source:     %s\n", data.Attribution))
 	}
 	sb.WriteString(fmt.Sprintf("  Content:    %s", data.Content))
+	// A stored learning can still carry a note the caller must read: the entry it
+	// corrects, the near-duplicate it was forced past, the supersede outcome.
+	// Without this line the whole note is invisible to the model (it reads this
+	// rendering, not the JSON).
+	if data.Message != "" && (data.Contradicts > 0 || data.DuplicateOf > 0 || data.SupersedesID > 0) {
+		sb.WriteString(fmt.Sprintf("\n  Note:       %s", data.Message))
+	}
 	return sb.String()
 }
 

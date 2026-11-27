@@ -29,3 +29,6 @@ yesmem.db
 node_modules/
 dbstats
 .opencode/
+
+# agent scratch (red proofs, probes) - never part of a commit
+.yesmem/tmp/
