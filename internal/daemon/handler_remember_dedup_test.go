@@ -18,12 +18,12 @@ import (
 func seedLearning(t *testing.T, s *storage.Store, category, content string) int64 {
 	t.Helper()
 	id, err := s.InsertLearning(&models.Learning{
-		Category:  category,
-		Content:   content,
+		Category:   category,
+		Content:    content,
 		Confidence: 1.0,
-		CreatedAt: time.Now(),
-		ModelUsed: "seed",
-		Source:    "user_stated",
+		CreatedAt:  time.Now(),
+		ModelUsed:  "seed",
+		Source:     "user_stated",
 	})
 	if err != nil {
 		t.Fatalf("seed learning: %v", err)

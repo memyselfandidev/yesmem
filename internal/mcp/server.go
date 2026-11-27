@@ -257,16 +257,29 @@ func formatSimpleMessage(raw json.RawMessage) string {
 // formatRemember renders a structured box for remember() responses.
 func formatRemember(raw json.RawMessage) string {
 	var data struct {
-		ID           int64  `json:"id"`
-		Category     string `json:"category"`
-		Project      string `json:"project"`
-		Content      string `json:"content"`
-		ModelUsed    string `json:"model_used"`
-		SupersedesID int64 `json:"supersedes_id"`
-		Message      string `json:"message"`
-		Attribution  string `json:"attribution"`
+		ID           int64   `json:"id"`
+		Category     string  `json:"category"`
+		Project      string  `json:"project"`
+		Content      string  `json:"content"`
+		ModelUsed    string  `json:"model_used"`
+		SupersedesID int64   `json:"supersedes_id"`
+		Message      string  `json:"message"`
+		Attribution  string  `json:"attribution"`
+		Stored       *bool   `json:"stored"`
+		DuplicateOf  int64   `json:"duplicate_of"`
+		Similarity   float64 `json:"similarity"`
 	}
 	if err := json.Unmarshal(raw, &data); err != nil {
+		return string(raw)
+	}
+	// Nothing was stored: the message is the whole answer. Rendering a rejection
+	// as "✓ Learning #N saved" is how the caller lost the text — it believed the
+	// memory had it. The flag is a pointer so that responses without the field
+	// keep the old rendering.
+	if data.Stored != nil && !*data.Stored {
+		if data.Message != "" {
+			return data.Message
+		}
 		return string(raw)
 	}
 	if data.ID == 0 {
@@ -363,22 +376,22 @@ func formatResolve(raw json.RawMessage) string {
 // formatLearnings converts a JSON array of learnings into compact one-liners with relative time.
 func formatLearnings(raw json.RawMessage) string {
 	var items []struct {
-		ID             int64    `json:"id"`
-		Content        string   `json:"content"`
-		Category       string   `json:"category"`
-		Project        string   `json:"project"`
-		Confidence     float64  `json:"confidence"`
-		HitCount       int      `json:"hit_count"`
-		UseCount       int      `json:"use_count"`
-		InjectCount    int      `json:"inject_count"`
-		Source         string   `json:"source"`
-		CreatedAt      string   `json:"created_at"`
-		Entities       []string `json:"entities,omitempty"`
-		TriggerRule    string   `json:"trigger_rule,omitempty"`
-		TaskType       string   `json:"task_type,omitempty"`
-		SessionID      string   `json:"session_id,omitempty"`
-		SupersedeReason string  `json:"supersede_reason,omitempty"`
-		Attribution    string   `json:"attribution,omitempty"`
+		ID              int64    `json:"id"`
+		Content         string   `json:"content"`
+		Category        string   `json:"category"`
+		Project         string   `json:"project"`
+		Confidence      float64  `json:"confidence"`
+		HitCount        int      `json:"hit_count"`
+		UseCount        int      `json:"use_count"`
+		InjectCount     int      `json:"inject_count"`
+		Source          string   `json:"source"`
+		CreatedAt       string   `json:"created_at"`
+		Entities        []string `json:"entities,omitempty"`
+		TriggerRule     string   `json:"trigger_rule,omitempty"`
+		TaskType        string   `json:"task_type,omitempty"`
+		SessionID       string   `json:"session_id,omitempty"`
+		SupersedeReason string   `json:"supersede_reason,omitempty"`
+		Attribution     string   `json:"attribution,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &items); err != nil {
 		// Maybe it's wrapped in an object
@@ -603,10 +616,10 @@ func (s *Server) proxyCallWithThreadID(method string, formatter func(json.RawMes
 			return mcplib.NewToolResultText(fmt.Sprintf("Error: %v", err)), nil
 		}
 		if formatter != nil {
-		if formatter != nil {
-			return mcplib.NewToolResultText(formatter(result)), nil
-		}
-		return mcplib.NewToolResultText(string(result)), nil
+			if formatter != nil {
+				return mcplib.NewToolResultText(formatter(result)), nil
+			}
+			return mcplib.NewToolResultText(string(result)), nil
 		}
 		return mcplib.NewToolResultText(string(result)), nil
 	}
@@ -862,7 +875,7 @@ func (s *Server) registerTools() {
 
 	s.srv.AddTool(
 		mcplib.NewTool("remember",
-			mcplib.WithDescription("Save a learning for future sessions"),
+			mcplib.WithDescription("Save a learning for future sessions. A near-duplicate is rejected explicitly with stored=false; force=true overrides that."),
 			mcplib.WithString("text", mcplib.Required(), mcplib.Description("Content to remember")),
 			mcplib.WithString("category", mcplib.Description("gotcha|decision|pattern|preference|explicit_teaching|strategic")),
 			mcplib.WithString("project", mcplib.Description("Project filter")),
@@ -870,6 +883,7 @@ func (s *Server) registerTools() {
 			mcplib.WithString("source", mcplib.Description("user_stated|agreed_upon|claude_suggested")),
 			mcplib.WithString("origin", mcplib.Description("Origin tool tag for provenance-aware trust scoring (e.g. manual, repl_command, llm_extracted_session)")),
 			mcplib.WithNumber("supersedes", mcplib.Description("ID of learning this replaces")),
+			mcplib.WithBoolean("force", mcplib.Description("Store despite a near-duplicate (default false)")),
 			mcplib.WithArray("entities", mcplib.WithStringItems(), mcplib.Description("Files, systems, people affected")),
 			mcplib.WithArray("actions", mcplib.WithStringItems(), mcplib.Description("Commands or operations involved")),
 			mcplib.WithString("trigger", mcplib.Description("When to surface this knowledge")),
@@ -1520,11 +1534,11 @@ func formatDocSources(raw json.RawMessage) string {
 // formatIngestResult converts ingest_docs JSON into a compact summary line.
 func formatIngestResult(raw json.RawMessage) string {
 	var data struct {
-		Message            string `json:"message"`
-		FilesProcessed     int    `json:"files_processed"`
-		FilesSkipped       int    `json:"files_skipped"`
-		ChunksCreated      int    `json:"chunks_created"`
-		LearningsSuperseded int   `json:"learnings_superseded"`
+		Message             string `json:"message"`
+		FilesProcessed      int    `json:"files_processed"`
+		FilesSkipped        int    `json:"files_skipped"`
+		ChunksCreated       int    `json:"chunks_created"`
+		LearningsSuperseded int    `json:"learnings_superseded"`
 	}
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return string(raw)

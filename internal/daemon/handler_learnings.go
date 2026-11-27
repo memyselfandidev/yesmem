@@ -19,6 +19,7 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 	project, _ := params["project"].(string)
 	source := stringOr(params, "source", "user_stated")
 	supersedesID, _ := params["supersedes"].(float64) // optional: ID of learning this replaces
+	force, _ := params["force"].(bool)                // optional: store even if the text looks like a near-duplicate
 
 	if !models.IsValidCategory(category) {
 		category = "explicit_teaching"
@@ -97,32 +98,78 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 		l.EmbeddingText = l.BuildEmbeddingText()
 	}
 
-	// Phase 0: exact content hash dedup (O(1), deterministic)
+	// Phase 0: exact content hash dedup (O(1), deterministic). The text is
+	// byte-identical to an entry that already exists, so nothing is lost by not
+	// writing a second row: the existing entry is reinforced, and the response
+	// says that no new learning was created.
 	hash := textutil.ContentHash(text)
 	l.ContentHash = hash
 	if existing, err := h.store.GetLearningByContentHash(hash); err == nil && existing != nil {
 		h.store.IncrementMatchCounts([]int64{existing.ID})
 		return jsonResponse(map[string]any{
 			"id":           existing.ID,
-			"message":      fmt.Sprintf("Exact duplicate (hash match). Bumped match_count for #%d.", existing.ID),
+			"stored":       false,
 			"deduplicated": true,
+			"duplicate_of": existing.ID,
+			"similarity":   1.0,
+			"message": fmt.Sprintf("Already known as #%d (identical text, similarity 1.00). No new learning was written; match_count of #%d was bumped.",
+				existing.ID, existing.ID),
 		})
 	}
 
-	// Phase 1: fuzzy dedup via token similarity (Jaccard ≥ 0.5)
+	// Phase 1: fuzzy near-duplicate detection via token containment similarity.
+	//
+	// A remember() call is never discarded silently. Three outcomes are decided
+	// here:
+	//   - opposing polarity   -> the new text corrects the existing entry, so it
+	//                            is stored (a correction is not a duplicate);
+	//   - near-duplicate      -> rejected EXPLICITLY: the response carries
+	//                            stored=false, the entry it collides with, the
+	//                            similarity, and the force=true escape hatch;
+	//   - no near-duplicate   -> stored.
+	// match_count is only touched on a byte-identical hash above: bumping an
+	// entry because a *different* text was thrown away strengthens the wrong row.
+	var contradicted *models.Learning
+	var contradictedSim float64
+	var forcedOver *models.Learning
+	var forcedOverSim float64
 	if supersedesID == 0 {
 		existing, _ := h.store.GetActiveLearnings(category, project, "", "", 0)
 		newTokens := textutil.Tokenize(text)
-		for _, e := range existing {
-			sim := textutil.TokenSimilarity(newTokens, textutil.Tokenize(e.Content))
-			if sim >= 0.5 {
-				h.store.IncrementMatchCounts([]int64{e.ID})
-				return jsonResponse(map[string]any{
-					"id":           e.ID,
-					"message":      fmt.Sprintf("Already known (similarity %.2f). Bumped match_count for #%d.", sim, e.ID),
-					"deduplicated": true,
-				})
+		var best *models.Learning
+		var bestSim float64
+		for i := range existing {
+			e := &existing[i]
+			eTokens := textutil.Tokenize(e.Content)
+			sim := textutil.TokenSimilarity(newTokens, eTokens)
+			if sim < nearDuplicateThreshold {
+				continue
 			}
+			if textutil.IsContradiction(newTokens, eTokens) {
+				if contradicted == nil || sim > contradictedSim {
+					contradicted, contradictedSim = e, sim
+				}
+				continue
+			}
+			if best == nil || sim > bestSim {
+				best, bestSim = e, sim
+			}
+		}
+		switch {
+		case contradicted != nil:
+			// correction: fall through to the insert below
+		case best != nil && force:
+			forcedOver, forcedOverSim = best, bestSim
+		case best != nil:
+			return jsonResponse(map[string]any{
+				"id":           int64(0),
+				"stored":       false,
+				"deduplicated": true,
+				"duplicate_of": best.ID,
+				"similarity":   bestSim,
+				"message": fmt.Sprintf("NOT stored. The new text is a near-duplicate of #%d (similarity %.2f, token containment) and match_count of #%d was left unchanged. Nothing was written to the memory. If the text carries new information, repeat the call with force=true; if it corrects #%d, repeat it with supersedes=%d.",
+					best.ID, bestSim, best.ID, best.ID, best.ID),
+			})
 		}
 	}
 
@@ -196,17 +243,38 @@ func (h *Handler) handleRemember(params map[string]any) Response {
 
 	resp := map[string]any{
 		"id":         id,
+		"stored":     true,
 		"category":   category,
 		"project":    project,
 		"content":    truncate(text, 120),
 		"model_used": l.ModelUsed,
 		"message":    fmt.Sprintf("Learning #%d saved (%s, model=%s).%s", id, category, l.ModelUsed, supersededMsg),
 	}
+	switch {
+	case contradicted != nil:
+		// Mode A: a correction is stored even though it is textually close to what
+		// it corrects. Naming the entry keeps the chain readable in the response.
+		resp["contradicts"] = contradicted.ID
+		resp["similarity"] = contradictedSim
+		resp["message"] = fmt.Sprintf("Learning #%d saved (%s, model=%s). Stored although it is %.2f similar to #%d: the two texts have opposite polarity, so this is a correction, not a duplicate. #%d was left untouched.%s",
+			id, category, l.ModelUsed, contradictedSim, contradicted.ID, contradicted.ID, supersededMsg)
+	case forcedOver != nil:
+		resp["duplicate_of"] = forcedOver.ID
+		resp["similarity"] = forcedOverSim
+		resp["message"] = fmt.Sprintf("Learning #%d saved (%s, model=%s) because force=true was set. #%d is %.2f similar and was left untouched.%s",
+			id, category, l.ModelUsed, forcedOver.ID, forcedOverSim, supersededMsg)
+	}
 	if supersedesID > 0 {
 		resp["supersedes_id"] = int64(supersedesID)
 	}
 	return jsonResponse(resp)
 }
+
+// nearDuplicateThreshold is the token-containment similarity at or above which a
+// new text counts as a near-duplicate of an existing learning. Crossing it does
+// not silence the call: the text is stored (opposing polarity, force=true) or the
+// call is rejected with an explicit reason and the entry it collided with.
+const nearDuplicateThreshold = 0.5
 
 func rememberModel(params map[string]any) string {
 	if model, ok := params["model"].(string); ok && strings.TrimSpace(model) != "" {

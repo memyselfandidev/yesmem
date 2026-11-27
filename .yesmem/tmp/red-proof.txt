@@ -1,0 +1,34 @@
+--- FAIL: TestHandleRememberNearDuplicateIsRejectedExplicitly (0.02s)
+    --- FAIL: TestHandleRememberNearDuplicateIsRejectedExplicitly/mode_B_foreign_entry_sharing_vocabulary (0.01s)
+        handler_remember_dedup_test.go:105: stored: got <nil> (present=false), want false — the new text was not written
+        handler_remember_dedup_test.go:108: duplicate_of: got <nil>, want 1
+        handler_remember_dedup_test.go:112: message must say the new text was not stored: got "Already known (similarity 0.86). Bumped match_count for #1."
+        handler_remember_dedup_test.go:115: message must not claim a match_count bump: got "Already known (similarity 0.86). Bumped match_count for #1."
+        handler_remember_dedup_test.go:118: message must name a way to store the text anyway: got "Already known (similarity 0.86). Bumped match_count for #1."
+        handler_remember_dedup_test.go:121: match_count of #1: got 1, want 0 — a discarded text must not strengthen an entry
+    --- FAIL: TestHandleRememberNearDuplicateIsRejectedExplicitly/mode_C_own_earlier_entry_on_the_same_topic (0.01s)
+        handler_remember_dedup_test.go:105: stored: got <nil> (present=false), want false — the new text was not written
+        handler_remember_dedup_test.go:108: duplicate_of: got <nil>, want 1
+        handler_remember_dedup_test.go:112: message must say the new text was not stored: got "Already known (similarity 1.00). Bumped match_count for #1."
+        handler_remember_dedup_test.go:115: message must not claim a match_count bump: got "Already known (similarity 1.00). Bumped match_count for #1."
+        handler_remember_dedup_test.go:118: message must name a way to store the text anyway: got "Already known (similarity 1.00). Bumped match_count for #1."
+        handler_remember_dedup_test.go:121: match_count of #1: got 1, want 0 — a discarded text must not strengthen an entry
+--- FAIL: TestHandleRememberCorrectionIsStored (0.01s)
+    handler_remember_dedup_test.go:156: correction returned the old id #1 — it was treated as a duplicate
+--- FAIL: TestHandleRememberForceStoresNearDuplicate (0.01s)
+    handler_remember_dedup_test.go:212: force=true returned the existing id #1
+--- FAIL: TestHandleRememberExactDuplicateReportsNothingNew (0.01s)
+    handler_remember_dedup_test.go:238: stored: got <nil> (present=false), want false
+    handler_remember_dedup_test.go:242: message must state that no new learning was written: got "Exact duplicate (hash match). Bumped match_count for #1."
+FAIL
+FAIL	github.com/carsteneu/yesmem/internal/daemon	0.168s
+--- FAIL: TestFormatRememberRejectionIsNotRenderedAsSaved (0.00s)
+    format_remember_test.go:21: rejection rendered as a save: "✓ Learning #4012 saved\n  Category:   \n  Content:    "
+    format_remember_test.go:24: rejection rendering lost the reason: "✓ Learning #4012 saved\n  Category:   \n  Content:    "
+FAIL
+FAIL	github.com/carsteneu/yesmem/internal/mcp	0.084s
+--- FAIL: TestRunLearnKeepsDistinctFailuresOfTheSameCommand (0.08s)
+    learn_test.go:75: gotcha rows: got 1 [Bash error: `go build ./...` → undefined: foo], want 2 — both failures carry distinct information
+FAIL
+FAIL	github.com/carsteneu/yesmem/internal/hooks	0.226s
+FAIL

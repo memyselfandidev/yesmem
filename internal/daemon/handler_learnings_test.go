@@ -428,9 +428,12 @@ func TestHandleRelateHappyPath(t *testing.T) {
 		Method: "remember",
 		Params: map[string]any{"text": "Learning A for relation test", "category": "pattern", "project": "yesmem"},
 	})
+	// The two fixture texts differ only in a one-letter token, so the token
+	// containment similarity sees a near-duplicate. force=true states the
+	// caller's intent — this test is about the relation, not about the text.
 	resp2 := h.Handle(Request{
 		Method: "remember",
-		Params: map[string]any{"text": "Learning B for relation test", "category": "pattern", "project": "yesmem"},
+		Params: map[string]any{"text": "Learning B for relation test", "category": "pattern", "project": "yesmem", "force": true},
 	})
 	var r1, r2 map[string]any
 	json.Unmarshal(resp1.Result, &r1)
@@ -501,11 +504,15 @@ func TestHandleRelateAllValidTypes(t *testing.T) {
 	for _, relType := range validTypes {
 		resp1 := h.Handle(Request{
 			Method: "remember",
-			Params: map[string]any{"text": "Relation type test A " + relType, "category": "pattern", "project": "yesmem"},
+			// force=true: successive iterations differ only in the relation-type token,
+			// which the containment similarity cannot distinguish. See TestHandleRelateHappyPath.
+			Params: map[string]any{"text": "Relation type test A " + relType, "category": "pattern", "project": "yesmem", "force": true},
 		})
 		resp2 := h.Handle(Request{
 			Method: "remember",
-			Params: map[string]any{"text": "Relation type test B " + relType, "category": "pattern", "project": "yesmem"},
+			// force=true: the fixture texts differ only in the relation-type token,
+			// which the containment similarity cannot distinguish. See TestHandleRelateHappyPath.
+			Params: map[string]any{"text": "Relation type test B " + relType, "category": "pattern", "project": "yesmem", "force": true},
 		})
 		var r1, r2 map[string]any
 		json.Unmarshal(resp1.Result, &r1)

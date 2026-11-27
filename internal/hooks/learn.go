@@ -67,16 +67,14 @@ func RunLearn(dataDir string) {
 	}
 	defer store.Close()
 
-	// Dedup: check similarity against existing gotchas
-	existing, _ := store.GetActiveLearnings("gotcha", "", "", "", 0)
-	newTokens := textutil.Tokenize(content)
-
-	for _, g := range existing {
-		if textutil.TokenSimilarity(newTokens, textutil.Tokenize(g.Content)) >= 0.5 {
-			// Already known — bump match count instead
-			store.IncrementMatchCounts([]int64{g.ID})
-			return
-		}
+	// Dedup on byte-identical content only. The previous >= 0.5 fuzzy rule
+	// discarded failures that differ exactly where the information lives — the
+	// same command with a different error raised the match_count of the first
+	// error and dropped the second one. An identical repeat is still one
+	// observation and still reinforces the row; anything else is new.
+	if existing, err := store.GetLearningByContentHash(textutil.ContentHash(content)); err == nil && existing != nil {
+		store.IncrementMatchCounts([]int64{existing.ID})
+		return
 	}
 
 	learning := &models.Learning{
